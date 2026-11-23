@@ -9,23 +9,23 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="theme-color" content="#0b141a" />
 		<meta name="text-scale" content="scale" />
-		<link href="./_app/immutable/entry/start.C4FmBhb8.js" rel="modulepreload">
-		<link href="./_app/immutable/chunks/C6RhJC0y.js" rel="modulepreload">
+		<link href="./_app/immutable/entry/start.z8gQRCWA.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/Bwiwty3K.js" rel="modulepreload">
 		<link href="./_app/immutable/chunks/BGNB7WVp.js" rel="modulepreload">
-		<link href="./_app/immutable/entry/app.1-aTqAW_.js" rel="modulepreload">
+		<link href="./_app/immutable/entry/app.CydOht0T.js" rel="modulepreload">
 		<link href="./_app/immutable/chunks/Bf3145U4.js" rel="modulepreload">
-		<link href="./_app/immutable/nodes/0.y5RBohfz.js" rel="modulepreload">
-		<link href="./_app/immutable/chunks/DEpYx0rS.js" rel="modulepreload">
-		<link href="./_app/immutable/nodes/2.BsKa64We.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/0.BJTnUU6f.js" rel="modulepreload">
+		<link href="./_app/immutable/chunks/C5yMR4vk.js" rel="modulepreload">
+		<link href="./_app/immutable/nodes/2.-F8HDSJ8.js" rel="modulepreload">
 		
 		<link href="./_app/immutable/assets/0.C-rZt_FY.css" rel="stylesheet">
-		<link href="./_app/immutable/assets/2.DvTNSVa6.css" rel="stylesheet">
+		<link href="./_app/immutable/assets/2.DUSu9gAG.css" rel="stylesheet">
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">
 			<script>
 				{
-					__sveltekit_x2v00k = {
+					__sveltekit_1gvi3va = {
 						base: new URL(".", location).pathname.slice(0, -1),
 						assets: "/samsara-wechat-preview"
 					};
@@ -33,45 +33,13 @@
 					const element = document.currentScript.parentElement;
 
 					Promise.all([
-						import("./_app/immutable/entry/start.C4FmBhb8.js"),
-						import("./_app/immutable/entry/app.1-aTqAW_.js")
+						import("./_app/immutable/entry/start.z8gQRCWA.js"),
+						import("./_app/immutable/entry/app.CydOht0T.js")
 					]).then(([kit, app]) => {
 						kit.start(app, element);
 					});
 				}
 			</script>
 		</div>
-	
-<script>
-if (new URLSearchParams(location.search).has('media-check')) {
-  const report = document.createElement('pre');
-  report.style.cssText = 'position:fixed;inset:0 0 auto;z-index:2147483647;margin:0;padding:7px;background:#000d;color:#aff;font:11px/1.32 monospace;white-space:pre-wrap;pointer-events:none';
-  document.body.append(report);
-  const events = [];
-  for (const name of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','suspend','pause','seeking','seeked','ended','error']) {
-    document.addEventListener(name, event => {
-      if (event.target.tagName !== 'VIDEO') return;
-      events.push(name + ':' + event.target.currentTime.toFixed(2));
-      if (events.length > 10) events.shift();
-    }, true);
-  }
-  const play = HTMLMediaElement.prototype.play;
-  HTMLMediaElement.prototype.play = function () {
-    const result = play.call(this);
-    if (this.tagName === 'VIDEO') {
-      events.push('play call');
-      result?.then(() => events.push('play resolved'), error => events.push(error.name));
-    }
-    return result;
-  };
-  setInterval(() => {
-    const v = document.querySelector('.video-stage video');
-    const state = v ? [v.src.split('/').pop(), 'time ' + v.currentTime.toFixed(3) + '/' + v.duration,
-      'ready ' + v.readyState + ' network ' + v.networkState + ' paused ' + v.paused + ' muted ' + v.muted,
-      'size ' + v.videoWidth + '×' + v.videoHeight + ' error ' + (v.error?.code ?? '-')] : ['no native video'];
-    report.textContent = state.concat(events.slice(-10)).join('\n');
-  }, 250);
-}
-</script>
-</body>
+	</body>
 </html>
