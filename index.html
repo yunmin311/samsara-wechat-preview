@@ -41,5 +41,37 @@
 				}
 			</script>
 		</div>
-	</body>
+	
+<script>
+if (new URLSearchParams(location.search).has('media-check')) {
+  const report = document.createElement('pre');
+  report.style.cssText = 'position:fixed;inset:0 0 auto;z-index:2147483647;margin:0;padding:7px;background:#000d;color:#aff;font:11px/1.32 monospace;white-space:pre-wrap;pointer-events:none';
+  document.body.append(report);
+  const events = [];
+  for (const name of ['loadstart','loadedmetadata','loadeddata','canplay','playing','waiting','stalled','suspend','pause','seeking','seeked','ended','error']) {
+    document.addEventListener(name, event => {
+      if (event.target.tagName !== 'VIDEO') return;
+      events.push(name + ':' + event.target.currentTime.toFixed(2));
+      if (events.length > 10) events.shift();
+    }, true);
+  }
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    const result = play.call(this);
+    if (this.tagName === 'VIDEO') {
+      events.push('play call');
+      result?.then(() => events.push('play resolved'), error => events.push(error.name));
+    }
+    return result;
+  };
+  setInterval(() => {
+    const v = document.querySelector('.video-stage video');
+    const state = v ? [v.src.split('/').pop(), 'time ' + v.currentTime.toFixed(3) + '/' + v.duration,
+      'ready ' + v.readyState + ' network ' + v.networkState + ' paused ' + v.paused + ' muted ' + v.muted,
+      'size ' + v.videoWidth + '×' + v.videoHeight + ' error ' + (v.error?.code ?? '-')] : ['no native video'];
+    report.textContent = state.concat(events.slice(-10)).join('\n');
+  }, 250);
+}
+</script>
+</body>
 </html>
