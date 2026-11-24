@@ -1,0 +1,749 @@
+<script>
+	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
+	import { videoStage } from '../components/videoStage.svelte.js';
+	import { loadMp4 } from '../components/videoPlayer.js';
+	import { draft, goToScreen, emptyDraft, restartProgress, bgMusicScale } from '../stores.js';
+	import { recordRun } from '../telemetry.js';
+	import Button from '../components/Button.svelte';
+	import { core } from '../game/core.js';
+	import { t, tr, translate } from '../i18n.js';
+	import { renderReceipt, canvasToBlob, RECEIPT_PAPER_MM, RECEIPT_VERSION } from '../receipt.js';
+
+	const { summary } = core;
+	const types = core.PropertyTypes;
+
+	// `initial` is the starting (post-rebalance) allocation passed through
+	// from Trajectory, keyed by the plain stat key -- shown as
+	// "initial -> final" per row when available.
+	const initial = $draft.initial ?? null;
+	// The value after the arrow is the stat AT DEATH, taken from the same
+	// core.propertys the trajectory stat bar renders and carrying the same
+	// floor at 0, so the two screens cannot disagree. It deliberately is NOT
+	// the H* high-water mark: those resolve through util.max, so a life that
+	// peaked at Health 7 and died at 0 used to report "4 -> 7" -- an arrow
+	// claiming a rise the player had just watched being contradicted. No
+	// upper clamp either; the stat bar has none, and capping at 13 would put
+	// the two screens back out of step for any stat that ended above it.
+	// The grade is re-derived from the death value against the H* judgement
+	// table (the only table these stats have) instead of inherited from the peak.
+	const property = core.request(core.Module.PROPERTY);
+	const finals = core.propertys;
+	const ROWS = [
+		[types.HMNY, 'MNY'],
+		[types.HCHR, 'CHR'],
+		[types.HINT, 'INT'],
+		[types.HSTR, 'STR'],
+		[types.HSPR, 'SPR'],
+	].map(([type, key]) => {
+		const value = Math.max(0, finals[types[key]] ?? 0);
+		return {
+			// `label` is what the player reads; `name` is the English stat
+			// name, which keys the telemetry row so it is identical in every
+			// language.
+			label: tr(`stat.${key}`),
+			name: translate('en', `stat.${key}`),
+			value,
+			grade: property.judgeOf(type, value).grade,
+			start: initial ? initial[key] : null,
+		};
+	});
+
+	// A drawn talent that never actually fired (its trigger count stays 0)
+	// means the trajectory ended -- almost always death -- before that
+	// talent's own age/condition was ever reached. Listing it under "Random
+	// Events" anyway would claim something happened that never did.
+	const talents = ($draft.talents ?? []).filter(talent => core.getTalentCurrentTriggerCount(talent.id) > 0);
+	const printText = $draft.printText ?? '';
+
+	// Whether every allocated token went into a single attribute at setup --
+	// the "what happens if I dump it all in one stat" trick the rail hint on
+	// the allocation panel points at. Once discovered there's nothing left to
+	// tip the player toward, so the summary hint only shows for playthroughs
+	// that didn't try it. Captured in Trajectory from the player's raw
+	// choices, before the free-allocation bonus tops every stat under 5 up
+	// to 5 -- deriving this from `initial` itself wouldn't work post-bonus,
+	// since every stat reads nonzero regardless of whether the trick fired.
+	const triedAllInOneStat = $draft.triedAllInOneStat ?? false;
+
+	// Passed through from Trajectory: the country/orientation chosen at setup
+	// and the final *display* age (post AGE-table mapping, i.e. the age the
+	// player actually watched themselves die at) -- the raw HAGE property is
+	// the internal 0-102 content index, kept only as a fallback.
+	// `country` and `sex` are the canonical English values Trajectory passed
+	// along (they also feed telemetry); the *Label forms are what is shown.
+	const country = $draft.country ?? '';
+	const sex = $draft.sex ?? '';
+	const countryLabel = $draft.countryCode ? tr(`country.${$draft.countryCode}`) : country;
+	const sexLabel = sex ? tr(`orient.${sex}`) : '';
+	const age = $draft.age ?? summary[types.HAGE].value;
+
+	// Two credit sets, because the two surfaces have opposite constraints.
+	// The receipt is 280px of monospace, so a role and its name have to be
+	// split across two lines to fit; the screen has the whole bottom-right
+	// corner, where those same splits read as broken sentences. Each entry
+	// is one rendered line in both places -- the on-screen {#each} (one <p>
+	// per entry) and the print window's join('<br>').
+	const CREDITS = tr('credits');
+	const CREDITS_PRINT = tr('credits');
+
+	// The receipt's four QR codes. Hoisted to component scope (rather than
+	// living inside onPrintTxt) so onMount can warm the browser cache with
+	// the exact same URLs the print window will request -- see the preload
+	// in onMount, which front-loads onPrintTxt's decode wait.
+	const QR_ORIGIN = `${base}/images`;
+	const QRS = [
+		['qrcode_preview.png', tr('sum.qr.play')],
+		['qr-code_wechat.png', tr('sum.qr.wechat')],
+		['qr-code_portfolio.png', tr('sum.qr.portfolio')],
+		['qr-code_discord.png', tr('sum.qr.discord')],
+	];
+
+	// Restart Life plays videos/8.mp4 -- a purpose-shot transition clip that
+	// opens on drifting cloud/sky (the same look Background.svelte's shader
+	// paints behind this screen) and pushes through it into the morgue,
+	// ending on 1.mp4's own opening framing. Verified against the source:
+	// its last frame matches 1.mp4's first frame (NCC 0.89), so handing off
+	// to CITYINTRO at the end is a continuation, not a cut.
+	//
+	// This replaces an earlier CSS approximation of the same move (a
+	// locally-outpainted still scaled 1->2 under a growing radial mask).
+	// Measuring 8.mp4 frame-by-frame is what retired it: the real move is a
+	// CONSTANT-RATE dolly (~1.096x per second, ~1.9x over the full clip;
+	// exponential fit rms 0.023) whereas the CSS version eased in and out on
+	// a smoothstep (rms 0.067 against the same data) over only 5s. Playing
+	// the clip matches length and zoom exactly rather than approximating
+	// them, and drops the fake still entirely.
+	//
+	//   1. Clicking Restart starts 8.mp4 on the shared VideoStage canvas
+	//      (which +page.svelte keeps mounted across screen swaps) and drives
+	//      restartProgress 0->1 over the clip's own runtime.
+	//   2. The summary panel dissolves early; Background.svelte's shader
+	//      clouds cross-fade out over the clip's own opening clouds (see its
+	//      reading of restartProgress), so the swap from live shader to
+	//      footage happens while both are showing cloud.
+	//   3. At completion goToScreen('CITYINTRO') mounts the intro, which
+	//      starts 1.mp4 on that same canvas. CanvasVideoPlayer keeps the
+	//      previous clip's last frame painted across a switch, so there is
+	//      no gap to flash.
+	//
+	// restartProgress is a shared store rather than local state because
+	// Background.svelte -- a sibling under +page.svelte, not a child this
+	// screen can pass props into -- reads the same per-frame value.
+	const RESTART_CLIP = `${base}/videos/8.mp4`;
+	// 8.mp4's final frame sits slightly further back than 1.mp4's opening
+	// (the woman reads smaller, the whole frame a touch up-right), so the
+	// CITYINTRO handoff showed as a small zoom/position snap. This is the
+	// inverse of the affine mismatch measured between those two frames
+	// (OpenCV ECC, correlation 0.991, shear ~0.0007 so pure scale+offset
+	// holds; NCC across the cut 0.883 -> 0.985 with it applied): ramped IN
+	// over the clip's last 1.6s by videoPlayer's alignOut, it plays as the
+	// tail of the dolly and the final frame lands exactly on 1.mp4's
+	// framing. Only the END matters here -- the clip's opening clouds have
+	// no alignment reference, so nothing warps the head.
+	const ALIGN_OUT_8 = { kx: 1.0263, ky: 1.0369, ux: -16.6, uy: 12.2, durationMs: 1600 };
+	// 8.mp4's exact runtime (169 frames @ 24fps + the tail of the last
+	// frame), so the screen switch lands on the clip's final frame rather
+	// than cutting it short or holding a frozen frame afterwards.
+	const DURATION_MS = 7042;
+	let restarting = $state(false);
+	let restartFrame = 0;
+
+	// The panel dissolves over the clip's first ~20% (~1.4s), which is the
+	// stretch 8.mp4 spends in full cloud before the morgue resolves --
+	// measured: the sky layer clears between t=1.0s and t=1.7s.
+	let fgOpacity = $derived(1 - Math.min(1, $restartProgress / 0.2));
+	let blurPx = $derived(Math.min(1, $restartProgress / 0.2) * 16);
+
+	function onAgain() {
+		if (restarting) return;
+		restarting = true;
+		clearTimeout(idleTimer);
+
+		let start;
+		function tick(now) {
+			const t = Math.min(1, (now - start) / DURATION_MS);
+			restartProgress.set(t);
+			if (t < 1) restartFrame = requestAnimationFrame(tick);
+		}
+		videoStage.play(RESTART_CLIP, {
+			alignOut: ALIGN_OUT_8,
+			onStarted: () => {
+				cancelAnimationFrame(restartFrame);
+				start = performance.now();
+				restartFrame = requestAnimationFrame(tick);
+			},
+			onEnded: () => {
+				cancelAnimationFrame(restartFrame);
+				draft.set(emptyDraft());
+				goToScreen('CITYINTRO');
+				restartProgress.set(0);
+			}
+		});
+	}
+
+	// Kiosk-style idle reset: this screen is a dead end otherwise (no
+	// auto-advance the way Trajectory has), so a visitor who walks away
+	// without pressing anything would leave the app parked on someone
+	// else's finished life indefinitely. Forty-five seconds with neither button touched
+	// triggers the exact same Restart Life flow a click would.
+	const IDLE_MS = 45000;
+	let idleTimer = null;
+	function resetIdleTimer() {
+		clearTimeout(idleTimer);
+		// The idle reset is for the unattended exhibition machine; on a
+		// visitor's own phone it would only yank the page away mid-read.
+		if (restarting || isTouch) return;
+		idleTimer = setTimeout(onAgain, IDLE_MS);
+	}
+	onMount(() => {
+		// The run is over: bring the background bed back up to full from the
+		// level Trajectory ducked it to on Start.
+		bgMusicScale.set(1);
+		resetIdleTimer();
+		// One row per finished life, mounted-once per run. Fire-and-forget:
+		// recordRun never throws and swallows network failures, so a downed
+		// exhibition connection can't touch the game. Talent ids are the
+		// DRAWN charms (fired or not) -- `talents` above is already filtered
+		// to fired ones for display, which would under-report the draw.
+		recordRun({
+			country,
+			orientation: sex,
+			age,
+			initial,
+			finals: Object.fromEntries(ROWS.map(r => [r.name, r.value])),
+			talents: ($draft.talents ?? []).map(t => t.id),
+			all_in: triedAllInOneStat,
+			death_event: $draft.deathEvent ?? null
+		});
+		// Warm the four QR PNGs (~340KB) while the player reads the summary,
+		// so onPrintTxt's decode wait is already satisfied by the time they
+		// hit Print -- otherwise a session's first receipt stalls a beat on
+		// the network. Same URLs the print window requests, so the browser
+		// cache does the work; failures are ignored, since the print path
+		// already tolerates missing codes.
+		for (const [file] of QRS) {
+			const img = new Image();
+			img.src = `${QR_ORIGIN}/${file}`;
+			img.decode?.().catch(() => {});
+		}
+		// Prefetch+demux the restart clip while the player is still reading
+		// the summary, so the click starts playback instead of a network
+		// wait. loadMp4 is URL-cached, so onAgain's play() reuses this.
+		if (videoStage.supported) loadMp4(RESTART_CLIP).catch(() => {});
+		return () => { clearTimeout(idleTimer); cancelAnimationFrame(restartFrame); };
+	});
+
+	// printText's own header block (built in Trajectory.svelte, before any
+	// of this screen's "initial -> final" arrow data existed) only has the
+	// starting allocation, e.g. "Family wealth: 5" -- rebuild that block
+	// here from ROWS so the print page shows the same before/after arrow
+	// the on-screen summary does, then splice back in printText's actual
+	// year-by-year story (everything from the first "Year " line on),
+	// which is untouched.
+	function printHeaderAndStory() {
+		const lines = printText.split('\n');
+		const storyStart = lines.findIndex(l => l.startsWith(tr('print.age')));
+		const story = storyStart === -1 ? [] : lines.slice(storyStart);
+		const sep = tr('print.sep');
+		const header = [
+			countryLabel ? `${tr('print.country')}${sep}${countryLabel}` : null,
+			sexLabel ? `${tr('print.orientation')}${sep}${sexLabel}` : null,
+			...ROWS.map(r => `${r.label}${sep}${r.start != null ? `${r.start} → ${r.value}` : r.value}`),
+		].filter(Boolean);
+		// '' is a receipt-style dashed tear-line marker between the header
+		// block (country/sex/stats) and the story, handled specially below
+		// since an empty <p> collapses to no visible height -- a real
+		// break needs its own element, not just an empty text line.
+		return [...header, '', ...story];
+	}
+	// The receipt as data for renderReceipt (src/lib/receipt.js), which
+	// draws it identically for the exhibition printer, the phone "save as
+	// image" and plain browser printing.
+	function receiptData(pxPerMm) {
+		const lines = printHeaderAndStory();
+		const split = lines.indexOf('');
+		const qrOrigin = `${window.location.origin}${QR_ORIGIN}`;
+		return {
+			masthead: tr('print.masthead'),
+			header: split === -1 ? [] : lines.slice(0, split),
+			story: split === -1 ? lines : lines.slice(split + 1),
+			qrs: QRS.map(([file, caption]) => ({ src: `${qrOrigin}/${file}`, caption })),
+			credits: CREDITS_PRINT,
+			portrait: `${qrOrigin}/receipt-portrait.png`,
+			pxPerMm,
+		};
+	}
+
+	// Phones (touch, no hover) get "save as image" instead of printing.
+	const isTouch =
+		typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
+	// Served by `npm run exhibit`? Then the local server prints the receipt
+	// itself, straight to the default printer, with no browser dialog at all.
+	const EXHIBIT_API = `${base}/__exhibit`;
+	let exhibitPrinter = false;
+	onMount(() => {
+		if (isTouch) return;
+		fetch(`${EXHIBIT_API}/ping`)
+			.then(r => r.ok && r.text())
+			.then(body => (exhibitPrinter = body === 'samsara-exhibit'))
+			.catch(() => {});
+	});
+
+	let busy = false;
+	async function onPrintTxt() {
+		if (busy) return;
+		busy = true;
+		try {
+			if (isTouch) return await saveAsImage();
+			// 8 px/mm = the thermal head's own 203 dpi, so nothing gets resampled.
+			const canvas = await renderReceipt({ ...receiptData(8), mono: true });
+			if (exhibitPrinter) {
+				const blob = await canvasToBlob(canvas);
+				const res = await fetch(`${EXHIBIT_API}/print`, {
+					method: 'POST',
+					body: blob,
+					// Lets the server tell a stale page (an old kiosk window) from the current one.
+					headers: { 'X-Samsara-Receipt': RECEIPT_VERSION },
+				}).catch(() => null);
+				if (res?.ok) return;
+				console.error('[Summary] exhibit printer failed, falling back to browser print', await res?.text?.());
+			}
+			await browserPrint(canvas);
+		} finally {
+			busy = false;
+		}
+	}
+
+	// Website printing: the receipt image alone in a hidden frame, sized to
+	// the paper band, then the browser's own print.
+	function browserPrint(canvas) {
+		return new Promise(resolve => {
+			const frame = document.createElement('iframe');
+			frame.setAttribute('aria-hidden', 'true');
+			frame.tabIndex = -1;
+			frame.style.cssText = 'position: fixed; right: 0; bottom: 0; width: 0; height: 0; border: 0;';
+			document.body.appendChild(frame);
+			const doc = frame.contentWindow.document;
+			doc.open();
+			doc.write(
+				`<!doctype html><html><head><style>
+					@page { size: ${RECEIPT_PAPER_MM}mm auto; margin: 0; }
+					html, body { margin: 0; padding: 0; }
+					img { display: block; width: ${RECEIPT_PAPER_MM}mm; }
+				</style></head><body><img src='${canvas.toDataURL('image/png')}'></body></html>`
+			);
+			doc.close();
+			const img = doc.images[0];
+			const go = () => {
+				const win = frame.contentWindow;
+				let done = false;
+				const cleanup = () => {
+					if (done) return;
+					done = true;
+					frame.remove();
+					resolve();
+				};
+				win.addEventListener('afterprint', () => setTimeout(cleanup, 500));
+				win.focus();
+				win.print();
+				setTimeout(cleanup, 15000);
+			};
+			(img.decode?.() ?? Promise.resolve()).then(go, go);
+		});
+	}
+
+	// Phones: show the receipt as one long image the visitor can press and
+	// hold to save (works inside WeChat too, where downloads do not).
+	let savedImage = $state(null);
+	async function saveAsImage() {
+		const canvas = await renderReceipt(receiptData(12));
+		savedImage = canvas.toDataURL('image/png');
+	}
+</script>
+
+<div class="summary-outer">
+	<!-- Nothing to render for the restart move itself: 8.mp4 plays on the
+	     shared VideoStage canvas that +page.svelte keeps mounted behind
+	     every screen (see the staging comment in the script block). This
+	     screen only fades its own layers out over it. -->
+	<div
+		class="summary"
+		class:restarting
+		style="opacity: {fgOpacity}; filter: blur({blurPx}px);"
+	>
+		<!-- Same drawn ♀ as CityIntro's title: Agency FB has no U+2640, so
+		     the text glyph fell back to a mismatched system font. -->
+		<h1 class="title" aria-label="♀Samsara">
+			<svg class="venus" viewBox="0 0 84 122" aria-hidden="true">
+				<circle cx="42" cy="34" r="27" />
+				<line x1="42" y1="61" x2="42" y2="114" />
+				<line x1="21" y1="90" x2="63" y2="90" />
+			</svg>Samsara
+		</h1>
+
+	<!-- Who this life was: country, orientation, and how long it lasted --
+	     laid out like the Trajectory statbar (dim caption above, big value
+	     below) so the two screens read as one system. -->
+	<div class="idcard">
+		{#if countryLabel}
+			<div class="id">
+				<span class="id-label">{$t('sum.country')}</span>
+				<span class="id-value">{countryLabel}</span>
+			</div>
+		{/if}
+		{#if sexLabel}
+			<div class="id">
+				<span class="id-label">{$t('sum.orientation')}</span>
+				<span class="id-value">{sexLabel}</span>
+			</div>
+		{/if}
+		<div class="id">
+			<span class="id-label">{$t('sum.livedTo')}</span>
+			<span class="id-value">{$t('sum.age', { age })}</span>
+		</div>
+	</div>
+
+	<!-- Horizontal band, mirroring the Trajectory statbar: label on top,
+	     value below -- five columns across instead of five stacked rows,
+	     so the whole page fits a 13" MacBook Air fullscreen untouched. -->
+	<div class="rows">
+		{#each ROWS as row (row.label)}
+			<div class="row grade-{row.grade}">
+				<span class="stat-label">{row.label}</span>
+				<span class="stat-values">
+					{#if row.start != null}
+						<span class="stat-start">{row.start}</span>
+						<span class="stat-arrow">→</span>
+					{/if}
+					<span class="stat-value">{row.value}</span>
+				</span>
+			</div>
+		{/each}
+	</div>
+
+	{#if talents.length}
+		<div class="talents">
+			<h2>{$t('sum.randomEvents')}</h2>
+			<ul>
+				{#each talents as talent (talent.id)}
+					<li>{$t('sum.talentLine', { name: talent.name, description: talent.description })}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
+	<div class="actions">
+		<Button variant="print" onclick={() => { resetIdleTimer(); onPrintTxt(); }}>{isTouch ? $t('sum.saveImage') : $t('sum.print')}</Button>
+		<Button onclick={() => { onAgain(); resetIdleTimer(); }}>{$t('sum.restart')}</Button>
+	</div>
+
+	{#if !triedAllInOneStat}
+		<!-- Stays unnumbered even though the bonus is a flat +5 again (see
+		     BONUS_AMOUNT in Trajectory.svelte): what varies per country is
+		     the TRIGGER, so naming a number here would invite reading it as
+		     the threshold rather than the reward. -->
+		<p class="hint">{$t('sum.hint')}</p>
+	{/if}
+
+	<div class="credits">
+		{#each CREDITS as line, i (i)}
+			<p>{line}</p>
+		{/each}
+	</div>
+	</div>
+</div>
+
+{#if savedImage}
+	<!-- Phones: the receipt as one long image. Press-and-hold saves it in
+	     every mobile browser, WeChat's included (which blocks downloads). -->
+	<div class="save-overlay" role="dialog" aria-modal="true" aria-label={$t('sum.saveImage')}>
+		<p class="save-hint">{$t('sum.saveHint')}</p>
+		<div class="save-scroll">
+			<img src={savedImage} alt={$t('print.masthead')} />
+		</div>
+		<button type="button" class="save-close" onclick={() => (savedImage = null)}>{$t('sum.close')}</button>
+	</div>
+{/if}
+
+<style>
+	:global(html.samsara-sideways) .summary-outer {
+		position: absolute;
+		inset: 0;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+	/* Recolored to match the 5 intro/trajectory clips' own cool, desaturated
+	   teal-blue tone (sampled directly from their footage: darkest shadow
+	   ~#0e1c2e, mid stairwell wall ~#2c4a57, pale skylight highlight
+	   ~#bcdce8 -- same values now driving Background.svelte's SUMMARY
+	   shader palette) instead of the previous warm khaki/parchment scheme,
+	   so this final screen reads as part of the same world the player just
+	   walked through rather than a differently-lit epilogue. Panel
+	   background and dim-caption color are shared with Trajectory's own
+	   scoped overrides for the same reason (visual continuity between the
+	   two screens that both sit over this footage). Grade accents keep
+	   the original's "brightest = best" logic, moved into this same cool
+	   family via lightness rather than a warm/cool hue split. */
+	.summary {
+		min-height: calc(100 * var(--game-visible-height-unit));
+		/* Positioning context for .credits' bottom-right corner. (The
+		   inline filter: blur() would already establish one, but only while
+		   a restart is animating -- this makes it unconditional.) */
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1.1rem;
+		padding: calc(1.75rem + var(--game-inset-top)) calc(1.5rem + var(--game-inset-right)) calc(1.25rem + var(--game-inset-bottom)) calc(1.5rem + var(--game-inset-left));
+		color: #dce8ee;
+		/* opacity/filter are driven per-frame from $restartProgress
+		   (see fgOpacity/blurPx in the script) rather than a CSS
+		   transition -- a transition would lag a frame behind and fight the
+		   already-smooth rAF-driven values. */
+	}
+	.summary.restarting {
+		pointer-events: none;
+	}
+	.title {
+		font-size: clamp(2rem, calc(6 * var(--game-width-unit)), 3rem);
+		margin: 0;
+		color: #eef6fa;
+		text-shadow: 0 2px 14px rgba(8, 16, 24, 0.6);
+		display: flex;
+		align-items: center;
+		gap: 0.08em;
+	}
+	.venus {
+		height: 0.8em;
+		width: auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 13;
+		stroke-linecap: round;
+		filter: drop-shadow(0 2px 6px rgba(8, 16, 24, 0.6));
+	}
+	.idcard {
+		display: flex;
+		/* space-between (not center): now that this box is widened to match
+		   .rows's own max-width so the two panels' left/right edges align,
+		   staying centered would leave the 3 id items bunched in the middle
+		   with idle space at both sides -- spreading them out instead
+		   mirrors how .rows's 5 columns already fill their shared width. */
+		justify-content: space-between;
+		gap: 2.5rem;
+		width: 100%;
+		max-width: 28rem;
+		background: rgba(27, 40, 48, 0.88);
+		border-radius: 0.6rem;
+		padding: 0.8rem 1.5rem;
+	}
+	.id {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.1rem;
+	}
+	.id-label {
+		font-size: 0.8rem;
+		color: #82a0ad;
+	}
+	.id-value {
+		font-size: 1.3rem;
+		font-weight: bold;
+		color: #e4f0f5;
+	}
+	.rows {
+		display: flex;
+		flex-direction: row;
+		gap: 0.6rem;
+		width: 100%;
+		max-width: 28rem;
+	}
+	.row {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		background: rgba(27, 40, 48, 0.88);
+		border-radius: 0.6rem;
+		padding: 0.55em 0.5em 0.5em;
+		border-top: 3px solid #3f5c68;
+	}
+	.stat-label {
+		font-size: 0.85rem;
+		color: #82a0ad;
+		white-space: nowrap;
+	}
+	.stat-values {
+		display: flex;
+		align-items: baseline;
+		gap: 0.35rem;
+	}
+	.stat-start {
+		font-size: 0.95rem;
+		color: #82a0ad;
+	}
+	.stat-arrow {
+		font-size: 0.85rem;
+		color: #5f7d8a;
+	}
+	.stat-value {
+		font-size: 1.35rem;
+		font-weight: bold;
+		color: #e4f0f5;
+	}
+	.row.grade-1 {
+		border-top-color: #bfe4f0;
+	}
+	.row.grade-2 {
+		border-top-color: #7fa8b8;
+	}
+	.row.grade-3 {
+		border-top-color: #4a6570;
+	}
+	.talents {
+		width: 100%;
+		max-width: 28rem;
+		text-align: left;
+	}
+	.talents h2 {
+		font-size: 1.1rem;
+		color: #82a0ad;
+		margin: 0 0 0.5rem;
+		font-weight: normal;
+		/* Storm-cloud outline: a tight dark rim plus a soft halo in the
+		   footage's shadow tone, so the same pale blue reads over both the
+		   bright and the dark patches of the cloud background. */
+		text-shadow:
+			0 0 1px #0e1c2e,
+			0 0 2px #0e1c2e,
+			1px 1px 2px rgba(14, 28, 46, 0.9),
+			0 0 10px rgba(14, 28, 46, 0.7);
+	}
+	.talents ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.talents li {
+		background: rgba(27, 40, 48, 0.88);
+		border-radius: 0.6rem;
+		padding: 0.6em 1em;
+		color: #ffffff;
+		font-size: 1.15rem;
+	}
+	/* Chinese sets taller than the English at the same size, and an unlucky
+	   draw of three long entries pushed the hint below the fold. A step
+	   smaller and tighter keeps the usual one-or-two-entry page unchanged in
+	   feel while leaving room for the rare long one. */
+	:global(html:lang(zh)) .talents ul {
+		gap: 0.4rem;
+	}
+	:global(html:lang(zh)) .talents li {
+		font-size: 1rem;
+		line-height: 1.5;
+		padding: 0.5em 0.9em;
+	}
+	.actions {
+		display: flex;
+		gap: 1rem;
+		flex-wrap: wrap;
+		justify-content: center;
+	}
+	/* Same treatment .title and .credits already use for text floating
+	   straight over the cloud background: a near-opaque light tint plus a
+	   dark drop shadow, rather than a flat white dimmed with opacity. At
+	   0.6 opacity and no shadow this was washing out completely against
+	   the shader's bright cloud-lit patches, which is exactly the failure
+	   .credits below documents. Sized up too -- it's the one piece of
+	   guidance on this screen, so it shouldn't read smaller than the
+	   talent rows beside it. */
+	.hint {
+		margin: 0;
+		font-size: 1.2rem;
+		line-height: 1.5;
+		white-space: pre-line;
+		color: rgba(238, 246, 250, 0.95);
+		text-shadow:
+			0 1px 3px rgba(6, 12, 18, 0.9),
+			0 2px 12px rgba(6, 12, 18, 0.7);
+	}
+	/* Out of the centre column entirely and parked in the bottom-right
+	   corner: the panel, hint and action buttons all compete for the middle
+	   of the screen, and eight lines of credits stacked under them made that
+	   column read as crowded. Absolute (not fixed) so it scrolls with the
+	   screen on short viewports, right-aligned against the same safe-area
+	   insets .summary pads with, and pointer-events: none so it can never
+	   sit over the Restart/Print hit areas. */
+	.credits {
+		position: absolute;
+		right: calc(1.5rem + var(--game-inset-right));
+		bottom: calc(1.25rem + var(--game-inset-bottom));
+		text-align: right;
+		pointer-events: none;
+	}
+	.credits p {
+		margin: 0.15em 0;
+		font-size: 0.7rem;
+		/* Each entry is authored as one full line here (unlike the receipt's
+		   narrower splits) -- never let a viewport re-break it mid-sentence. */
+		white-space: nowrap;
+		/* Higher opacity + a dark drop shadow (same treatment as .title)
+		   instead of a faint, nearly-see-through tint -- the old
+		   rgba(...,0.55) all but vanished against this screen's bright
+		   cloud-lit patches. */
+		color: rgba(226, 240, 245, 0.85);
+		text-shadow: 0 1px 6px rgba(6, 12, 18, 0.75);
+	}
+
+	.save-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.8rem 1rem calc(0.8rem + var(--game-inset-bottom));
+		background: rgba(8, 16, 24, 0.88);
+		-webkit-backdrop-filter: blur(6px);
+		backdrop-filter: blur(6px);
+	}
+	.save-hint {
+		margin: 0;
+		color: #eef6fa;
+		font-size: 1rem;
+		letter-spacing: 0.08em;
+	}
+	.save-scroll {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		border-radius: 0.3rem;
+	}
+	.save-scroll img {
+		display: block;
+		width: min(26rem, calc(80 * var(--game-width-unit)));
+		height: auto;
+		/* Let the browser's own press-and-hold menu (save image) through. */
+		-webkit-touch-callout: default;
+		user-select: auto;
+	}
+	.save-close {
+		padding: 0.4em 1.6em;
+		font: inherit;
+		font-size: 1rem;
+		color: #17262e;
+		background: rgba(238, 246, 250, 0.92);
+		border: none;
+		border-radius: 999px;
+		cursor: pointer;
+	}
+</style>

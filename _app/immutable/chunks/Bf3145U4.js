@@ -1,1 +1,0 @@
-import{V as e}from"./BGNB7WVp.js";e(),typeof window<`u`&&((globalThis.__svelte??={}).v??=new Set).add(`5`);

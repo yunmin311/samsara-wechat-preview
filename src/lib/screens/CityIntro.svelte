@@ -1,0 +1,515 @@
+<script>
+	// The 3D city panorama (CitySkyboxBackground) is gone -- the intro is
+	// now pure video, custom-rendered through WebCodecs onto the shared
+	// VideoStage canvas (see videoStage.svelte.js for why it's shared rather
+	// than owned here, and videoPlayer.js for why not a plain <video>):
+	//
+	//   1. videos/1.mp4 loops full-screen as the title backdrop.
+	//   2. First click anywhere: videos/2.mp4 plays once (2.mp4 was
+	//      pre-fetched and pre-demuxed during the loop, so the switch is
+	//      seamless -- the canvas holds 1.mp4's current frame until 2.mp4's
+	//      first frame lands).
+	//   3. The clip freezes on its own final frame -- under WebCodecs we
+	//      simply stop presenting new frames, so the freeze is exact.
+	//   4. Second click anywhere: on to the computer / country selection.
+	//
+	// Browsers without WebCodecs fall back to the shared VideoStage's native
+	// <video> driving the same click state machine (with the browser's own
+	// last-frame behavior, which is the best available there).
+	import { fitRectStyle } from '../components/videoFit.js';
+	import { onMount, onDestroy } from 'svelte';
+	import { base } from '$app/paths';
+	import { goToScreen, bgMusicScale } from '../stores.js';
+	import { videoStage } from '../components/videoStage.svelte.js';
+	import { CLIP_VOLUME, BG_DUCKED_SCALE } from '../audio.js';
+	import COUNTRIES from '../game/functions/countries.js';
+	import { t } from '../i18n.js';
+	import LangToggle from '../components/LangToggle.svelte';
+
+	const clip = n => `${base}/videos/${n}.mp4`;
+
+	// The title loop (1.mp4) plays at half speed -- applied to the WebCodecs
+	// presentation clock, its audio track, and the <video> fallback alike.
+	// The transition clips (2.mp4, 3.mp4) stay at normal speed.
+	const LOOP_RATE = 0.5;
+
+	// All three clips share this frame size; the country overlay maps onto
+	// 3.mp4's final frame through the same cover-fit math the canvas uses.
+	const VIDEO_W = 1280;
+	const VIDEO_H = 720;
+
+	// The generated clips reprise the previous clip's scene with slightly
+	// different framing (2.mp4 opens ~7.5% zoomed out vs 1.mp4's steady
+	// camera; 3.mp4 opens ~19px lower than 2.mp4's end), which showed as a
+	// visible size snap on each click. These are the inverses of the affine
+	// mismatch measured between the boundary frames (OpenCV ECC, confidence
+	// >0.99): the incoming clip starts warped to line up exactly with the
+	// frozen frame, then eases to its natural framing as a camera move.
+	const ALIGN_2 = { kx: 1.0775, ky: 1.0893, ux: -49.1, uy: -21.5, durationMs: 1200 };
+	const ALIGN_3 = { kx: 0.998, ky: 1.0022, ux: 1.7, uy: 19.3, durationMs: 1200 };
+
+	// 3.mp4 ends on a morgue wall of cabinet doors: 5 full door columns
+	// across, 3 door rows down, with the center door of the third row
+	// standing open (black) -- that cell stays empty. The 12 countries sit
+	// on the doors alphabetically, reading left-to-right, top-to-bottom:
+	// 3 on the top row (inner columns), 5 across the middle, 4 on the
+	// bottom row skipping the open door -- all mirror-symmetric about the
+	// frame's vertical centerline. Coordinates are percentages of the
+	// 1280x720 frame, measured off the final frame's door centers.
+	const DOOR_COLS = [19.2, 34.7, 50, 65.3, 80.8];
+	const DOOR_ROWS = [10.4, 30.8, 51.7];
+	const DOOR_SLOTS = [
+		[1, 0], [2, 0], [3, 0],
+		[0, 1], [1, 1], [2, 1], [3, 1], [4, 1],
+		[0, 2], [1, 2], [3, 2], [4, 2], // [2, 2] is the open black cabinet
+	];
+	// The door each country sits on is fixed by its English name's alphabetical
+	// order in every language (re-sorting by a translated name would shuffle
+	// the doors); only the label printed on the plate is localized.
+	const COUNTRY_CELLS = [...COUNTRIES]
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map(({ code }, i) => ({
+			code,
+			x: DOOR_COLS[DOOR_SLOTS[i][0]],
+			y: DOOR_ROWS[DOOR_SLOTS[i][1]],
+		}));
+
+	let containerEl = $state();
+	// The WebCodecs path renders video only, so the clips' AAC tracks play
+	// through plain <audio> elements alongside the shared canvas
+	// (frame-exact sync isn't needed for ambience; both start together on
+	// the same click).
+	let audio1El = $state(null);
+	let audio2El = $state(null);
+	let audio3El = $state(null);
+	let audio4El = $state(null);
+
+	let resizeObserver;
+
+	// 'loading' -> 'loop' -> 'transition' -> 'frozen' -> 'morgue' -> 'select'
+	let phase = $state('loading');
+
+	// 2.mp4 cuts to the fogged glass, where the English line is written, this
+	// many seconds in. The Chinese subtitle starts at that cut rather than
+	// waiting for the clip to finish. Timed off the clip's own audio element,
+	// which starts on the same click; if that never plays (or the clip is
+	// skipped), the subtitle still appears with the frozen final frame.
+	const GLASS_CUT_S = 12.4;
+	let glassReached = $state(false);
+	let showReborn = $derived(phase === 'frozen' || (phase === 'transition' && glassReached));
+	$effect(() => {
+		if (phase !== 'transition') return;
+		let frame = requestAnimationFrame(function poll() {
+			if ((audio2El?.currentTime ?? 0) >= GLASS_CUT_S) glassReached = true;
+			else frame = requestAnimationFrame(poll);
+		});
+		return () => cancelAnimationFrame(frame);
+	});
+
+	// Container size, tracked so the country overlay can be pinned to the
+	// exact cover-fit rectangle the video occupies on screen -- the door
+	// percentages above are in video space, not viewport space.
+	let cw = $state(0);
+	let ch = $state(0);
+	let overlayStyle = $derived(fitRectStyle(cw, ch, VIDEO_W, VIDEO_H));
+
+	onMount(() => {
+		// These four play over the looping bg.opus bed, so they carry an
+		// explicit level rather than the element default of 1 -- see audio.js
+		// for the balance between the two layers.
+		for (const a of [audio1El, audio2El, audio3El, audio4El]) {
+			if (a) a.volume = CLIP_VOLUME;
+		}
+
+		// Only the door-overlay math needs this component's own size (the
+		// shared VideoStage tracks its own, for the canvas) -- both always
+		// equal the viewport, but each stays independently responsible for
+		// what it uses the measurement for.
+		resizeObserver = new ResizeObserver(() => {
+			cw = containerEl.clientWidth;
+			ch = containerEl.clientHeight;
+		});
+		resizeObserver.observe(containerEl);
+
+		videoStage.play(clip(1), { loop: true, rate: LOOP_RATE, audio: audio1El, next: clip(2) })
+			.then(() => { phase = 'loop'; });
+	});
+
+	onDestroy(() => {
+		resizeObserver?.disconnect();
+		audio1El?.pause();
+		audio2El?.pause();
+		audio3El?.pause();
+		audio4El?.pause();
+	});
+
+	async function advance() {
+		if (phase === 'loop') {
+			phase = 'transition';
+			bgMusicScale.set(BG_DUCKED_SCALE);
+			await videoStage.play(clip(2), {
+				audio: audio2El, align: ALIGN_2, next: clip(3), onEnded: () => { phase = 'frozen'; }
+			});
+		} else if (phase === 'frozen') {
+			phase = 'morgue';
+			await videoStage.play(clip(3), {
+				audio: audio3El, align: ALIGN_3, next: clip(4), onEnded: () => { phase = 'select'; }
+			});
+		}
+	}
+
+	function selectCountry(code) {
+		if (phase !== 'select') return;
+		phase = 'exit';
+		videoStage.play(clip(4), {
+			audio: audio4El, next: clip(5), onEnded: () => goToScreen('PLAZA', { countryCode: code })
+		});
+	}
+
+	function onKeydown(e) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			advance();
+		}
+	}
+</script>
+
+<div
+	class="intro"
+	class:clickable={phase === 'loop' || phase === 'frozen'}
+	bind:this={containerEl}
+	onclick={advance}
+	onkeydown={onKeydown}
+	role="button"
+	tabindex="0"
+>
+	<!-- Video itself now renders through the shared VideoStage (see
+	     +page.svelte); only the audio tracks are still owned locally. -->
+	<audio bind:this={audio1El} src="{base}/audios/1.m4a" loop preload="none"></audio>
+	<audio bind:this={audio2El} src="{base}/audios/2.m4a" preload="none"></audio>
+	<audio bind:this={audio3El} src="{base}/audios/3.m4a" preload="none"></audio>
+	<audio bind:this={audio4El} src="{base}/audios/4.m4a" preload="none"></audio>
+
+	{#if phase === 'select'}
+		<!-- Pinned to the video's cover-fit rectangle so each name lands on
+		     its cabinet door regardless of viewport shape. Same type
+		     treatment as the title screen's "click anywhere to begin". -->
+		<div class="select-overlay" style={overlayStyle}>
+			{#each COUNTRY_CELLS as { code, x, y } (code)}
+				<button
+					type="button"
+					class="cell"
+					style="left: {x}%; top: {y}%;"
+					onclick={e => {
+						e.stopPropagation();
+						selectCountry(code);
+					}}
+				>
+					<span class="cell-label">{$t(`country.${code}`)}</span>
+				</button>
+			{/each}
+			<!-- The prompt lies "painted" on the morgue floor: a perspective
+			     transform pitches the text block back into the floor plane
+			     (the shot is one-point perspective, straight at the wall, so
+			     a centered symmetric trapezoid reads correctly). No animation
+			     -- the flicker this used to carry read as distracting/hard
+			     to read, so the text just sits there steady now. -->
+			<div class="floor-text" aria-hidden="true">
+				{$t('intro.pickCountry')}
+			</div>
+		</div>
+	{/if}
+
+	<div class="content" class:hidden={phase !== 'loop'}>
+		<!-- The ♀ is drawn as an inline SVG rather than a text glyph: the
+		     title font (Agency FB) has no U+2640, so the character fell
+		     back to a system font whose thin, misaligned mark clashed with
+		     the heavy condensed wordmark. Stroke width is tuned to match
+		     Agency FB's bold stems at this size. -->
+		<h1 class="title" aria-label="♀Samsara">
+			<svg class="venus" viewBox="0 0 84 122" aria-hidden="true">
+				<circle cx="42" cy="34" r="27" />
+				<line x1="42" y1="61" x2="42" y2="114" />
+				<line x1="21" y1="90" x2="63" y2="90" />
+			</svg>Samsara
+		</h1>
+		<p class="credit">{$t('intro.credit')}</p>
+		<!-- The language switch sits in the title block, between the byline
+		     and the prompt. Only mounted during the loop: .content is merely
+		     transparent in the other phases, and an invisible switch must not
+		     take clicks. -->
+		{#if phase === 'loop'}
+			<LangToggle />
+		{/if}
+		<p class="hint">{$t('intro.hint')}</p>
+	</div>
+
+
+	{#if showReborn && $t('intro.reborn')}
+		<!-- 2.mp4 ends on "You are reborn / as a girl" being written on the
+		     fogged glass. Languages that need it get a subtitle between those
+		     two lines, pinned to the video rectangle; it starts with the
+		     English lettering and surfaces one character at a time. -->
+		<div class="select-overlay" style={overlayStyle} aria-hidden="true">
+			<p class="reborn">
+				{#each [...$t('intro.reborn')] as char, i (i)}
+					<span style="animation-delay: {0.2 + i * 0.45}s">{char}</span>
+				{/each}
+			</p>
+		</div>
+	{/if}
+
+	{#if phase === 'frozen'}
+		<!-- 2.mp4's own baked-in final frame reads "You are reborn today as
+		     a female" -- this sits just below it, same type treatment as
+		     .hint, so the two read as one continuous piece of UI. -->
+		<p class="continue-hint">{$t('intro.continue')}</p>
+	{/if}
+</div>
+
+<style>
+	/* Transparent: the actual picture comes from the shared VideoStage
+	   canvas (z-index -1, rendered by +page.svelte), which sits underneath
+	   this whole screen's UI overlay. */
+	.intro {
+		position: fixed;
+		inset: 0;
+		overflow: hidden;
+		outline: none;
+	}
+	.intro.clickable {
+		cursor: pointer;
+	}
+
+	.content {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-end;
+		/* The language switch adds a row to the block; it is taken out of
+		   the bottom padding so the wordmark stays where it was, clear of
+		   the figure on the bed. */
+		padding-bottom: calc(12 * var(--game-height-unit) - 2.8rem);
+		gap: 1rem;
+		pointer-events: none;
+	}
+	/* Slow reveal: a keyframe animation (not a transition) so it reliably
+	   plays from the moment .hidden is removed -- a transition can be
+	   swallowed when the hidden state never got painted (phase flips to
+	   'loop' within the first frames of a fast load). Hiding stays instant. */
+	.content:not(.hidden) {
+		animation: content-fade 3.2s ease both;
+	}
+	.content.hidden {
+		opacity: 0;
+	}
+	@keyframes content-fade {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	.title {
+		font-size: clamp(2.5rem, calc(7 * var(--game-width-unit)), 4rem);
+		margin: 0;
+		text-shadow: 0 2px 16px rgba(0, 0, 0, 0.6);
+		display: flex;
+		align-items: center;
+		gap: 0.08em;
+	}
+	.venus {
+		height: 0.8em;
+		width: auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 13;
+		stroke-linecap: round;
+		/* Matches .title's text-shadow, which SVG strokes don't inherit. */
+		filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+	}
+	.credit {
+		/* A step below .hint's 1rem, and pulled up against the wordmark so
+		   the byline reads as part of the title block rather than the UI. */
+		margin: -0.65rem 0 0;
+		font-size: 0.85rem;
+		letter-spacing: 0.22em;
+		color: rgba(255, 255, 255, 0.65);
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+	}
+	.hint {
+		margin: 0;
+		font-size: 1rem;
+		letter-spacing: 0.12em;
+		color: rgba(255, 255, 255, 0.75);
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+		animation: pulse 2.4s ease-in-out infinite;
+	}
+
+	/* Same type treatment as .hint (family/tracking/color/shadow inherited,
+	   same breathing pulse) -- sits low, under 2.mp4's own baked-in text,
+	   rather than in .content's flex column (which is only laid out for
+	   the loop phase's title). Sized a step above .hint (not just matching
+	   it): this is the second beat in the sequence, so it reads as a slight
+	   escalation rather than a repeat of the same prompt. */
+	.continue-hint {
+		position: absolute;
+		left: 50%;
+		bottom: 14%;
+		transform: translateX(-50%);
+		margin: 0;
+		font-size: 1.3rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(255, 255, 255, 0.75);
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+		animation: pulse 2.4s ease-in-out infinite;
+	}
+
+	.reborn {
+		position: absolute;
+		left: 51%;
+		top: 52.5%;
+		transform: translate(-50%, -50%);
+		margin: 0;
+		white-space: nowrap;
+		font-family: 'Samsara Hand', 'Yuanti SC', 'YouYuan', 'STKaiti', 'KaiTi', cursive;
+		font-size: 4.4cqh;
+		letter-spacing: 0.35em;
+		color: rgba(226, 238, 244, 0.42);
+		text-shadow: 0 0 0.5em rgba(190, 215, 230, 0.3);
+	}
+	.reborn span {
+		display: inline-block;
+		opacity: 0;
+		animation: reborn-char 1.2s ease forwards;
+	}
+	@keyframes reborn-char {
+		from {
+			opacity: 0;
+			transform: translateY(0.18em);
+			filter: blur(3px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+			filter: none;
+		}
+	}
+
+	.select-overlay {
+		position: absolute;
+		pointer-events: none;
+		/* Lets children size themselves in cq units, i.e. relative to the
+		   video's drawn rectangle -- the floor text must scale with the
+		   footage, unlike the fixed-rem door labels. */
+		container-type: size;
+	}
+	/* Same type family/tracking as .hint, one size up, engraved into a
+	   nameplate riveted to each door -- matching the small blank label
+	   plates the doors already carry. Colors are sampled directly off
+	   those actual plates in 3.mp4's final frame (a cool steel blue-grey,
+	   not a neutral silver): body ~#7e95a2, its brightest bevel highlight
+	   ~#b0c9d6, its darkest bevel shadow ~#546b78, and the plate's own
+	   recessed interior reads as essentially the *same* tone as the door
+	   around it (just shadowed into a recess), not a contrasting light
+	   fill -- the previous near-white plate looked like a separate sticker
+	   glued on, rather than a cutout stamped into this same steel. */
+	/* Every plate is the same fixed size, sized to fit the longest country
+	   name ("Afghanistan" / "North Korea", both 11 characters) -- per the
+	   reference sketch, shorter names center within that same frame
+	   rather than each plate shrink-wrapping its own text. The plate is
+	   two nested rectangles (outer bezel + inner engraved label), matching
+	   the sketch's double-border look; the brushed-steel gradient/bevel
+	   from the door hardware carries over unchanged. */
+	.cell {
+		position: absolute;
+		transform: translate(-50%, -50%);
+		pointer-events: auto;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		/* Width comes from .cell-label's own fixed width below, plus this
+		   padding as a uniform outer bezel margin -- letting the label set
+		   the size (rather than fixing it here too and having the two
+		   paddings compound) is what was clipping "Afghanistan"/"North
+		   Korea" before. Tightened from 0.4em/0.45em -- the outer bezel
+		   read as oversized once the inner label itself was trimmed to fit
+		   the text exactly. */
+		padding: 0.22em 0.28em;
+		cursor: pointer;
+		font-family: inherit;
+		background: linear-gradient(180deg, #9bb0bc 0%, #7e95a2 50%, #6a8390 100%);
+		border: 1px solid rgba(34, 46, 54, 0.6);
+		border-radius: 3px;
+		box-shadow:
+			0 1px 3px rgba(0, 0, 0, 0.5),
+			inset 0 1px 0 rgba(176, 201, 214, 0.8),
+			inset 0 -1px 2px rgba(20, 30, 38, 0.35);
+		transition: filter 150ms ease;
+	}
+	.cell:hover {
+		filter: brightness(1.12);
+	}
+	.cell-label {
+		display: block;
+		/* Sized to exactly fit the longest name at this font/letter-spacing
+		   ("Afghanistan"/"North Korea", both 11 characters -- measured
+		   live at ~14ch, no headroom beyond that), so the inner border
+		   hugs the text instead of leaving slack around it. overflow:
+		   visible stays as a backstop even if a longer name is ever added. */
+		width: 14ch;
+		text-align: center;
+		padding: 0.2em 0.3em;
+		font-size: 1rem;
+		letter-spacing: 0.12em;
+		white-space: nowrap;
+		overflow: visible;
+		color: #eef3f6;
+		text-shadow: 0 1px 1px rgba(10, 18, 24, 0.6);
+		border: 1px solid rgba(30, 42, 50, 0.55);
+		border-radius: 1px;
+		background: #6a838f;
+		/* Bright rim at the top inner edge, dark shadow pooling at the
+		   bottom -- the recess's own light-from-above bevel, matching the
+		   real plates' bright-top/dark-bottom falloff instead of a flat
+		   inset darkening on every side. */
+		box-shadow:
+			inset 0 2px 3px rgba(15, 25, 32, 0.55),
+			inset 0 1px 1px rgba(176, 201, 214, 0.4);
+	}
+
+	/* "Painted on the floor": pitched back into the ground plane via a
+	   perspective rotateX -- the shot looks straight at the wall
+	   (one-point perspective, centered vanishing point), so a symmetric
+	   floor trapezoid is the correct projection. Sized in cq units so it
+	   scales with the footage; same type family/tracking as the hint. */
+	.floor-text {
+		position: absolute;
+		left: 50%;
+		top: 85%;
+		width: max-content;
+		transform: translate(-50%, -50%) perspective(6em) rotateX(48deg);
+		font-size: 4.1cqh;
+		line-height: 1.6;
+		letter-spacing: 0.12em;
+		text-align: center;
+		white-space: pre-line;
+		color: rgba(255, 255, 255, 0.85);
+		text-shadow:
+			0 0 0.4em rgba(180, 210, 230, 0.6),
+			0 1px 8px rgba(0, 0, 0, 0.8);
+	}
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 0.45;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+</style>
