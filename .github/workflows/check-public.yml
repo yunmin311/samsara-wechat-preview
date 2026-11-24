@@ -1,0 +1,20 @@
+name: Check published preview
+on:
+  push:
+    branches: [preview-check]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  visitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --prefix "$RUNNER_TEMP/visitor" playwright-core@1.57.0
+      - run: NODE_PATH="$RUNNER_TEMP/visitor/node_modules" CHROME_BIN="$(which google-chrome)" node scripts/check-public.cjs wechat
+        env:
+          SITE: https://yunmin311.github.io/samsara-wechat-preview/
