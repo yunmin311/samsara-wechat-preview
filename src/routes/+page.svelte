@@ -1,4 +1,5 @@
 <script>
+	import { mobileMedia } from '$lib/clipPath.js';
 	import { onMount } from 'svelte';
 	import { screen } from '$lib/stores.js';
 	import { initGame } from '$lib/game/core.js';
@@ -23,7 +24,7 @@
      this can't be conditionally rendered per-screen the way it used to be. -->
 <VideoStage />
 
-<!-- Also persistent, and deliberately outside the {#if ready} gate below:
+<!-- Also persistent, and deliberately outside the {#if ready || (mobileMedia && $screen === 'CITYINTRO')} gate below:
      the background track should be running before the game data finishes
      loading, not after. -->
 <BackgroundMusic />
@@ -32,7 +33,7 @@
 	<Background screen={$screen} />
 {/if}
 
-{#if ready}
+{#if ready || (mobileMedia && $screen === 'CITYINTRO')}
 	<Current />
 {:else}
 	<div class="loading">♀Samsara</div>

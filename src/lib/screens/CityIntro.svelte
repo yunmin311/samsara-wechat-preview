@@ -18,7 +18,7 @@
 	// last-frame behavior, which is the best available there).
 	import { fitRectStyle } from '../components/videoFit.js';
 	import { onMount, onDestroy } from 'svelte';
-	import { base } from '$app/paths';
+	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { goToScreen, bgMusicScale } from '../stores.js';
 	import { loadMp4 } from '../components/videoPlayer.js';
 	import { videoStage } from '../components/videoStage.svelte.js';
@@ -137,7 +137,7 @@
 
 		if (!supported) {
 			phase = 'loop';
-			videoStage.playFallback(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE, muted: true });
+			videoStage.playFallback(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE, muted: true });
 			return;
 		}
 
@@ -145,13 +145,13 @@
 			try {
 				// Fetch + demux the later clips in the background while the
 				// loop plays, so each click switches instantly.
-				media2Promise = loadMp4(`${base}/videos/2.mp4`);
+				media2Promise = loadMp4(`${mediaBase}/videos/2.mp4`);
 				media2Promise.catch(() => {}); // surfaced on click instead
-				media3Promise = loadMp4(`${base}/videos/3.mp4`);
+				media3Promise = loadMp4(`${mediaBase}/videos/3.mp4`);
 				media3Promise.catch(() => {});
-				media4Promise = loadMp4(`${base}/videos/4.mp4`);
+				media4Promise = loadMp4(`${mediaBase}/videos/4.mp4`);
 				media4Promise.catch(() => {});
-				await videoStage.play(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
+				await videoStage.play(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
 				phase = 'loop';
 				startLoopAudio();
 			} catch (err) {
@@ -207,7 +207,7 @@
 			if (supported) {
 				try {
 					await media2Promise;
-					await videoStage.play(`${base}/videos/2.mp4`, {
+					await videoStage.play(`${mediaBase}/videos/2.mp4`, {
 						loop: false,
 						align: ALIGN_2,
 						onEnded: () => {
@@ -221,7 +221,7 @@
 			} else {
 				// unmuting is allowed now that a real click happened; 2.mp4
 				// runs at normal speed (rate defaults to 1).
-				videoStage.playFallback(`${base}/videos/2.mp4`, { onEnded: () => (phase = 'frozen') });
+				videoStage.playFallback(`${mediaBase}/videos/2.mp4`, { onEnded: () => (phase = 'frozen') });
 			}
 		} else if (phase === 'frozen') {
 			// End of 2.mp4: the click rolls 3.mp4 (the morgue wall), whose
@@ -235,7 +235,7 @@
 			if (supported) {
 				try {
 					await media3Promise;
-					await videoStage.play(`${base}/videos/3.mp4`, {
+					await videoStage.play(`${mediaBase}/videos/3.mp4`, {
 						loop: false,
 						align: ALIGN_3,
 						onEnded: () => {
@@ -247,7 +247,7 @@
 					phase = 'select';
 				}
 			} else {
-				videoStage.playFallback(`${base}/videos/3.mp4`, { onEnded: () => (phase = 'select') });
+				videoStage.playFallback(`${mediaBase}/videos/3.mp4`, { onEnded: () => (phase = 'select') });
 			}
 		}
 		// clicks during 'loading'/'transition'/'morgue'/'select' are ignored
@@ -270,13 +270,13 @@
 		if (supported) {
 			try {
 				await media4Promise;
-				await videoStage.play(`${base}/videos/4.mp4`, { loop: false, onEnded: done });
+				await videoStage.play(`${mediaBase}/videos/4.mp4`, { loop: false, onEnded: done });
 			} catch (err) {
 				console.error('[CityIntro] exit video failed', err);
 				done();
 			}
 		} else {
-			videoStage.playFallback(`${base}/videos/4.mp4`, { onEnded: done });
+			videoStage.playFallback(`${mediaBase}/videos/4.mp4`, { onEnded: done });
 		}
 	}
 
@@ -299,10 +299,10 @@
 >
 	<!-- Video itself now renders through the shared VideoStage (see
 	     +page.svelte); only the audio tracks are still owned locally. -->
-	<audio bind:this={audio1El} src="{base}/videos/1.mp4" loop preload="auto"></audio>
-	<audio bind:this={audio2El} src="{base}/videos/2.mp4" preload="auto"></audio>
-	<audio bind:this={audio3El} src="{base}/videos/3.mp4" preload="auto"></audio>
-	<audio bind:this={audio4El} src="{base}/videos/4.mp4" preload="auto"></audio>
+	<audio bind:this={audio1El} src="{mediaBase}/videos/1.mp4" loop preload={mobileMedia ? 'none' : 'auto'}></audio>
+	<audio bind:this={audio2El} src="{mediaBase}/videos/2.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
+	<audio bind:this={audio3El} src="{mediaBase}/videos/3.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
+	<audio bind:this={audio4El} src="{mediaBase}/videos/4.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
 
 	{#if phase === 'select'}
 		<!-- Pinned to the video's cover-fit rectangle so each name lands on

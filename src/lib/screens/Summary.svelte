@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { base } from '$app/paths';
+	import { mediaBase } from '$lib/clipPath.js';
 	import { videoStage } from '../components/videoStage.svelte.js';
 	import { loadMp4 } from '../components/videoPlayer.js';
 	import { draft, goToScreen, emptyDraft, restartProgress, bgMusicScale } from '../stores.js';
@@ -130,7 +131,7 @@
 	// restartProgress is a shared store rather than local state because
 	// Background.svelte -- a sibling under +page.svelte, not a child this
 	// screen can pass props into -- reads the same per-frame value.
-	const RESTART_CLIP = `${base}/videos/8.mp4`;
+	const RESTART_CLIP = `${mediaBase}/videos/8.mp4`;
 	// 8.mp4's final frame sits slightly further back than 1.mp4's opening
 	// (the woman reads smaller, the whole frame a touch up-right), so the
 	// CITYINTRO handoff showed as a small zoom/position snap. This is the

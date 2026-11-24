@@ -2,7 +2,7 @@
 	import { observeGameViewport } from '../gameViewport.js';
 	import { fitRectStyle } from '../components/videoFit.js';
 	import { onMount } from 'svelte';
-	import { base } from '$app/paths';
+	import { mediaBase } from '$lib/clipPath.js';
 	import { draft, goToScreen } from '../stores.js';
 	import { core } from '../game/core.js';
 	import { loadMp4, webCodecsSupported } from '../components/videoPlayer.js';
@@ -50,7 +50,7 @@
 		// own loadMp4() call for the same URL then just awaits this same
 		// cached promise instead of starting a fresh fetch, closing the gap
 		// that used to show as a black flash while Trajectory waited on it.
-		if (webCodecsSupported()) loadMp4(`${base}/videos/5.mp4`).catch(() => {});
+		if (webCodecsSupported()) loadMp4(`${mediaBase}/videos/5.mp4`).catch(() => {});
 
 		return stopObserving;
 	});

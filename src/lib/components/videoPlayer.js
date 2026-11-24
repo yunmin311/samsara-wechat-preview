@@ -174,6 +174,8 @@ export class CanvasVideoPlayer {
 		// transform: screen = off + s*(k*v + u). Any strip the warped rect
 		// leaves uncovered keeps the previous clip's pixels (the canvas is
 		// never cleared), which is the correct scene content there.
+		// Alignment offsets were measured in the original 1280 x 720 frame.
+		const alignScale = s * (fw / 1280);
 		const a = this.#align;
 		if (a) {
 			const t = frame.timestamp / a.durationUs;
@@ -182,8 +184,8 @@ export class CanvasVideoPlayer {
 				const remain = Math.pow(1 - Math.max(0, t), 3); // easeOutCubic
 				const kx = 1 + (a.kx - 1) * remain;
 				const ky = 1 + (a.ky - 1) * remain;
-				dx += s * a.ux * remain;
-				dy += s * a.uy * remain;
+				dx += alignScale * a.ux * remain;
+				dy += alignScale * a.uy * remain;
 				dw *= kx;
 				dh *= ky;
 			}
@@ -201,8 +203,8 @@ export class CanvasVideoPlayer {
 			const left = (b.endUs - frame.timestamp) / b.durationUs;
 			const p = 1 - Math.min(1, Math.max(0, left)); // 0 far from end, 1 at end
 			const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-			dx += s * b.ux * e;
-			dy += s * b.uy * e;
+			dx += alignScale * b.ux * e;
+			dy += alignScale * b.uy * e;
 			dw *= 1 + (b.kx - 1) * e;
 			dh *= 1 + (b.ky - 1) * e;
 		}
