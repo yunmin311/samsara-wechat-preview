@@ -26,7 +26,8 @@
 	import { t } from '../i18n.js';
 	import LangToggle from '../components/LangToggle.svelte';
 
-	const clip = n => `${base}/videos/${n}.mp4`;
+	// The streaming copy has the same media payload with its index at the front.
+	const clip = n => n === 3 ? `${base}/stream/videos/3.mp4` : `${base}/videos/${n}.mp4`;
 
 	// The title loop (1.mp4) plays at half speed -- applied to the WebCodecs
 	// presentation clock, its audio track, and the <video> fallback alike.
