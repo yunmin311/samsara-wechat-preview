@@ -9,7 +9,7 @@
 	// than waiting on initGame().
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
-	import { mediaBase } from '$lib/clipPath.js';
+	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { BG_VOLUME, BG_RAMP_MS, BG_RESTORE_RAMP_MS } from '../audio.js';
 	import { bgMusicScale } from '../stores.js';
 
@@ -103,6 +103,9 @@
      browser that cannot play Opus skips it on the declared codec instead of
      fetching 1.3 MB to find out. -->
 <audio bind:this={el} loop preload="auto">
+	{#if mobileMedia}
+		<source src="{mediaBase}/audios/bg.m4a" type="audio/mp4; codecs=mp4a.40.2" />
+	{/if}
 	<source src="{mediaBase}/audios/bg.opus" type="audio/ogg; codecs=opus" />
 	<source src="{base}/audios/bg.m4a" type="audio/mp4; codecs=mp4a.40.2" />
 </audio>

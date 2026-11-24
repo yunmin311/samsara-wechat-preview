@@ -147,9 +147,11 @@
 				// loop plays, so each click switches instantly.
 				media2Promise = loadMp4(`${mediaBase}/videos/2.mp4`);
 				media2Promise.catch(() => {}); // surfaced on click instead
-				media3Promise = loadMp4(`${mediaBase}/videos/3.mp4`);
+				const load3 = () => loadMp4(`${mediaBase}/videos/3.mp4`);
+				media3Promise = mobileMedia ? media2Promise.then(load3, load3) : load3();
 				media3Promise.catch(() => {});
-				media4Promise = loadMp4(`${mediaBase}/videos/4.mp4`);
+				const load4 = () => loadMp4(`${mediaBase}/videos/4.mp4`);
+				media4Promise = mobileMedia ? media3Promise.then(load4, load4) : load4();
 				media4Promise.catch(() => {});
 				await videoStage.play(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
 				phase = 'loop';

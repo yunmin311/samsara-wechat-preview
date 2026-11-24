@@ -11,12 +11,15 @@
 		<meta name="text-scale" content="scale" />
 		<script>
 			if (/Android/i.test(navigator.userAgent) && /MicroMessenger/i.test(navigator.userAgent) && typeof VideoDecoder !== 'undefined') {
-				const opening = document.createElement('link');
-				opening.rel = 'preload';
-				opening.as = 'fetch';
-				opening.crossOrigin = 'anonymous';
-				opening.href = '%sveltekit.assets%/wechat/videos/1.mp4';
-				document.head.append(opening);
+				for (const clip of [1, 2]) {
+					const opening = document.createElement('link');
+					opening.rel = 'preload';
+					opening.as = 'fetch';
+					opening.crossOrigin = 'anonymous';
+					opening.fetchPriority = clip === 1 ? 'high' : 'auto';
+					opening.href = '%sveltekit.assets%/wechat/videos/' + clip + '.mp4';
+					document.head.append(opening);
+				}
 			}
 		</script>
 		%sveltekit.head%

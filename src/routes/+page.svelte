@@ -1,5 +1,6 @@
 <script>
-	import { mobileMedia } from '$lib/clipPath.js';
+	import { loadMp4, webCodecsSupported } from '$lib/components/videoPlayer.js';
+	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { onMount } from 'svelte';
 	import { screen } from '$lib/stores.js';
 	import { initGame } from '$lib/game/core.js';
@@ -15,6 +16,10 @@
 
 	onMount(async () => {
 		wireNotifications();
+		if (mobileMedia && webCodecsSupported()) {
+			// Let the first interactive transition finish downloading before the life data.
+			await loadMp4(`${mediaBase}/videos/2.mp4`).catch(() => {});
+		}
 		await initGame();
 		ready = true;
 	});
