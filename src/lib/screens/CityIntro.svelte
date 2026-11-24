@@ -20,7 +20,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { goToScreen, bgMusicScale } from '../stores.js';
-	import { loadMp4 } from '../components/videoPlayer.js';
+	import { loadMp4, playClipAudio } from '../components/videoPlayer.js';
 	import { videoStage } from '../components/videoStage.svelte.js';
 	import { CLIP_VOLUME, BG_DUCKED_SCALE } from '../audio.js';
 	import COUNTRIES from '../game/functions/countries.js';
@@ -180,9 +180,9 @@
 	function startLoopAudio() {
 		if (!audio1El) return;
 		audio1El.playbackRate = LOOP_RATE;
-		audio1El.play().catch(() => {
+		playClipAudio(audio1El).catch(() => {
 			const resume = () => {
-				if (phase === 'loop') audio1El?.play().catch(() => {});
+				if (phase === 'loop') playClipAudio(audio1El).catch(() => {});
 			};
 			window.addEventListener('pointerdown', resume, { once: true, capture: true });
 			window.addEventListener('keydown', resume, { once: true, capture: true });
@@ -202,7 +202,7 @@
 			audio1El?.pause();
 			if (audio2El) {
 				audio2El.currentTime = 0;
-				audio2El.play().catch(() => {});
+				playClipAudio(audio2El).catch(() => {});
 			}
 			if (supported) {
 				try {
@@ -230,7 +230,7 @@
 			phase = 'morgue';
 			if (audio3El) {
 				audio3El.currentTime = 0;
-				audio3El.play().catch(() => {});
+				playClipAudio(audio3El).catch(() => {});
 			}
 			if (supported) {
 				try {
@@ -264,7 +264,7 @@
 		audio3El?.pause();
 		if (audio4El) {
 			audio4El.currentTime = 0;
-			audio4El.play().catch(() => {});
+			playClipAudio(audio4El).catch(() => {});
 		}
 		const done = () => goToScreen('PLAZA', { countryCode: code });
 		if (supported) {

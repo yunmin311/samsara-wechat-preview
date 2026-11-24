@@ -16,6 +16,7 @@
 // backpressure logic in play().
 
 import { createFile, DataStream, MP4BoxBuffer } from 'mp4box';
+import { mobileMedia } from '../clipPath.js';
 import { onSkip } from '../skip.js';
 import { fitScale, STAGE_BG } from './videoFit.js';
 
@@ -62,10 +63,26 @@ export function loadMp4(url) {
 	return promise;
 }
 
+// The Android WeChat audio element can issue a second range request for the
+// same movie even after fetch() has downloaded it. Give both players the
+// same bytes. The eight object URLs live alongside the session's clip cache.
+export async function playClipAudio(el) {
+	if (!el?.isConnected) return;
+	if (mobileMedia && webCodecsSupported() && !el.src.startsWith('blob:')) {
+		const url = el.getAttribute('src');
+		const media = await loadMp4(url);
+		if (!el.isConnected) return;
+		media.audioUrl ??= URL.createObjectURL(media.audioBlob);
+		el.src = media.audioUrl;
+	}
+	return el.play();
+}
+
 async function fetchAndDemux(url) {
 	const resp = await fetch(url);
 	if (!resp.ok) throw new Error(`fetch ${url}: HTTP ${resp.status}`);
 	const buffer = await resp.arrayBuffer();
+	const audioBlob = mobileMedia ? new Blob([buffer], { type: 'video/mp4' }) : undefined;
 
 	return new Promise((resolve, reject) => {
 		const file = createFile();
@@ -101,7 +118,7 @@ async function fetchAndDemux(url) {
 					}),
 				);
 			}
-			if (config && chunks.length >= nbSamples) resolve({ config, chunks });
+			if (config && chunks.length >= nbSamples) resolve({ config, chunks, audioBlob });
 		};
 
 		file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer, 0));
@@ -111,7 +128,7 @@ async function fetchAndDemux(url) {
 		// count bookkeeping above never tripped (and rejects cleanly if
 		// parsing silently produced nothing).
 		setTimeout(() => {
-			if (config && chunks.length > 0) resolve({ config, chunks });
+			if (config && chunks.length > 0) resolve({ config, chunks, audioBlob });
 			else reject(new Error(`mp4 demux produced no samples for ${url}`));
 		}, 0);
 	});

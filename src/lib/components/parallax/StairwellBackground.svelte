@@ -29,7 +29,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
 	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
-	import { loadMp4 } from '../videoPlayer.js';
+	import { loadMp4, playClipAudio } from '../videoPlayer.js';
 	import { videoStage } from '../videoStage.svelte.js';
 
 	let { onAllocReady = null, advance = false, onWalking = null, exit = false, onExited = null } = $props();
@@ -98,7 +98,7 @@
 		audio5El?.pause();
 		if (audio6El) {
 			audio6El.currentTime = 0;
-			audio6El.play().catch(() => {});
+			playClipAudio(audio6El).catch(() => {});
 		}
 		if (!supported) {
 			videoStage.playFallback(`${mediaBase}/videos/6.mp4`, { onEnded: startWalking });
@@ -127,7 +127,7 @@
 		audio6El?.pause();
 		if (audio7El) {
 			audio7El.currentTime = 0;
-			audio7El.play().catch(() => {});
+			playClipAudio(audio7El).catch(() => {});
 		}
 		if (!supported) {
 			videoStage.playFallback(`${mediaBase}/videos/7.mp4`, { onEnded: () => onExited?.() });
@@ -151,8 +151,8 @@
 	// starts -- try immediately, and if refused, retry on the next input.
 	function startAudio(el) {
 		if (!el) return;
-		el.play().catch(() => {
-			const resume = () => el?.play().catch(() => {});
+		playClipAudio(el).catch(() => {
+			const resume = () => playClipAudio(el).catch(() => {});
 			window.addEventListener('pointerdown', resume, { once: true, capture: true });
 			window.addEventListener('keydown', resume, { once: true, capture: true });
 		});
