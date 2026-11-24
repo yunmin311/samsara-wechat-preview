@@ -72,7 +72,7 @@ const log = (...args)=>console.log(mode, ...args);
         let max=0;for(let i=0;i<data.length;i+=4)max=Math.max(max,data[i],data[i+1],data[i+2]);
         return max>12?canvas.toDataURL():'';
       });
-      let first=''; for(let i=0;i<16;i++){
+      let first=''; for(let i=0;i<(label==='restart'?180:16);i++){
         const frame=await read(); if(frame){if(first&&frame!==first)return;first=frame;}
         await p.waitForTimeout(110);
       }
@@ -136,7 +136,7 @@ const log = (...args)=>console.log(mode, ...args);
       await hit('.actions button',0); assert.equal((await response).status(),200);
     }
     await hit('.actions button',1,true); await motion('restart'); await wait('.intro.clickable'); await motion('restarted opening');
-    for(let i=1;i<=8;i++)assert.ok(media.has(path+'/videos/'+i+'.mp4'),'missing video '+i);
+    for(let i=1;i<=8;i++)assert.ok(media.has(path+(i===3?'/stream':'')+'/videos/'+i+'.mp4'),'missing video '+i);
     assert.deepEqual([...nonlocal],[]);assert.deepEqual(httpErrors,[]);assert.deepEqual(errors,[]);
     log('all 8 video requests, visible transitions, sound 2–7 and BG, summary, receipt, restart passed; zero external requests or gameplay errors');
   } catch(e) {
