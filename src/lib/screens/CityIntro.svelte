@@ -20,14 +20,14 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
 	import { goToScreen, bgMusicScale } from '../stores.js';
+	import { loadMp4 } from '../components/videoPlayer.js';
 	import { videoStage } from '../components/videoStage.svelte.js';
 	import { CLIP_VOLUME, BG_DUCKED_SCALE } from '../audio.js';
 	import COUNTRIES from '../game/functions/countries.js';
 	import { t } from '../i18n.js';
 	import LangToggle from '../components/LangToggle.svelte';
 
-	// The streaming copy has the same media payload with its index at the front.
-	const clip = n => n === 3 ? `${base}/stream/videos/3.mp4` : `${base}/videos/${n}.mp4`;
+	const supported = videoStage.supported;
 
 	// The title loop (1.mp4) plays at half speed -- applied to the WebCodecs
 	// presentation clock, its audio track, and the <video> fallback alike.
@@ -85,6 +85,9 @@
 	let audio3El = $state(null);
 	let audio4El = $state(null);
 
+	let media2Promise = null;
+	let media3Promise = null;
+	let media4Promise = null;
 	let resizeObserver;
 
 	// 'loading' -> 'loop' -> 'transition' -> 'frozen' -> 'morgue' -> 'select'
@@ -132,8 +135,32 @@
 		});
 		resizeObserver.observe(containerEl);
 
-		videoStage.play(clip(1), { loop: true, rate: LOOP_RATE, audio: audio1El, next: clip(2) })
-			.then(() => { phase = 'loop'; });
+		if (!supported) {
+			phase = 'loop';
+			videoStage.playFallback(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE, muted: true });
+			return;
+		}
+
+		(async () => {
+			try {
+				// Fetch + demux the later clips in the background while the
+				// loop plays, so each click switches instantly.
+				media2Promise = loadMp4(`${base}/videos/2.mp4`);
+				media2Promise.catch(() => {}); // surfaced on click instead
+				media3Promise = loadMp4(`${base}/videos/3.mp4`);
+				media3Promise.catch(() => {});
+				media4Promise = loadMp4(`${base}/videos/4.mp4`);
+				media4Promise.catch(() => {});
+				await videoStage.play(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
+				phase = 'loop';
+				startLoopAudio();
+			} catch (err) {
+				// Broken/missing video shouldn't dead-end the whole game --
+				// fall straight to the frozen state, where a click advances.
+				console.error('[CityIntro] intro video failed', err);
+				phase = 'frozen';
+			}
+		})();
 	});
 
 	onDestroy(() => {
@@ -144,27 +171,113 @@
 		audio4El?.pause();
 	});
 
+	// Unmuted autoplay is blocked by every modern browser until the page
+	// has seen a user gesture -- try anyway (browsers with prior engagement
+	// or relaxed policy will allow it), and if refused, retry on the first
+	// pointer/key gesture. pointerdown fires before click, so even when
+	// that same gesture is the click that advances to the transition clip,
+	// the retry resolves against the right phase.
+	function startLoopAudio() {
+		if (!audio1El) return;
+		audio1El.playbackRate = LOOP_RATE;
+		audio1El.play().catch(() => {
+			const resume = () => {
+				if (phase === 'loop') audio1El?.play().catch(() => {});
+			};
+			window.addEventListener('pointerdown', resume, { once: true, capture: true });
+			window.addEventListener('keydown', resume, { once: true, capture: true });
+		});
+	}
+
 	async function advance() {
 		if (phase === 'loop') {
 			phase = 'transition';
+			// "click anywhere to begin": everything from here to the Summary
+			// screen has a clip soundtrack or a stair log competing with the
+			// bed, so the bed drops to a quarter and stays there for the
+			// whole run. Summary puts it back to full.
 			bgMusicScale.set(BG_DUCKED_SCALE);
-			await videoStage.play(clip(2), {
-				audio: audio2El, align: ALIGN_2, next: clip(3), onEnded: () => { phase = 'frozen'; }
-			});
+			// Running inside a click handler, so unmuted playback is
+			// always permitted from here on.
+			audio1El?.pause();
+			if (audio2El) {
+				audio2El.currentTime = 0;
+				audio2El.play().catch(() => {});
+			}
+			if (supported) {
+				try {
+					await media2Promise;
+					await videoStage.play(`${base}/videos/2.mp4`, {
+						loop: false,
+						align: ALIGN_2,
+						onEnded: () => {
+							phase = 'frozen';
+						},
+					});
+				} catch (err) {
+					console.error('[CityIntro] transition video failed', err);
+					phase = 'frozen';
+				}
+			} else {
+				// unmuting is allowed now that a real click happened; 2.mp4
+				// runs at normal speed (rate defaults to 1).
+				videoStage.playFallback(`${base}/videos/2.mp4`, { onEnded: () => (phase = 'frozen') });
+			}
 		} else if (phase === 'frozen') {
+			// End of 2.mp4: the click rolls 3.mp4 (the morgue wall), whose
+			// final frame becomes the country-selection screen -- replacing
+			// the computer's own country list entirely.
 			phase = 'morgue';
-			await videoStage.play(clip(3), {
-				audio: audio3El, align: ALIGN_3, next: clip(4), onEnded: () => { phase = 'select'; }
-			});
+			if (audio3El) {
+				audio3El.currentTime = 0;
+				audio3El.play().catch(() => {});
+			}
+			if (supported) {
+				try {
+					await media3Promise;
+					await videoStage.play(`${base}/videos/3.mp4`, {
+						loop: false,
+						align: ALIGN_3,
+						onEnded: () => {
+							phase = 'select';
+						},
+					});
+				} catch (err) {
+					console.error('[CityIntro] morgue video failed', err);
+					phase = 'select';
+				}
+			} else {
+				videoStage.playFallback(`${base}/videos/3.mp4`, { onEnded: () => (phase = 'select') });
+			}
 		}
+		// clicks during 'loading'/'transition'/'morgue'/'select' are ignored
 	}
 
-	function selectCountry(code) {
+	// Picking a door no longer jumps straight to the Plaza: 4.mp4 first
+	// walks out of the morgue into the hospital corridor, and only its final
+	// frame (frozen) hands over to the PLAZA screen -- the shared VideoStage
+	// canvas just keeps playing straight through into whatever Plaza asks
+	// for next, so there's nothing to visibly cut between the two screens.
+	async function selectCountry(code) {
 		if (phase !== 'select') return;
 		phase = 'exit';
-		videoStage.play(clip(4), {
-			audio: audio4El, next: clip(5), onEnded: () => goToScreen('PLAZA', { countryCode: code })
-		});
+		audio3El?.pause();
+		if (audio4El) {
+			audio4El.currentTime = 0;
+			audio4El.play().catch(() => {});
+		}
+		const done = () => goToScreen('PLAZA', { countryCode: code });
+		if (supported) {
+			try {
+				await media4Promise;
+				await videoStage.play(`${base}/videos/4.mp4`, { loop: false, onEnded: done });
+			} catch (err) {
+				console.error('[CityIntro] exit video failed', err);
+				done();
+			}
+		} else {
+			videoStage.playFallback(`${base}/videos/4.mp4`, { onEnded: done });
+		}
 	}
 
 	function onKeydown(e) {
@@ -186,10 +299,10 @@
 >
 	<!-- Video itself now renders through the shared VideoStage (see
 	     +page.svelte); only the audio tracks are still owned locally. -->
-	<audio bind:this={audio1El} src="{base}/audios/1.m4a" loop preload="none"></audio>
-	<audio bind:this={audio2El} src="{base}/audios/2.m4a" preload="none"></audio>
-	<audio bind:this={audio3El} src="{base}/audios/3.m4a" preload="none"></audio>
-	<audio bind:this={audio4El} src="{base}/audios/4.m4a" preload="none"></audio>
+	<audio bind:this={audio1El} src="{base}/videos/1.mp4" loop preload="auto"></audio>
+	<audio bind:this={audio2El} src="{base}/videos/2.mp4" preload="auto"></audio>
+	<audio bind:this={audio3El} src="{base}/videos/3.mp4" preload="auto"></audio>
+	<audio bind:this={audio4El} src="{base}/videos/4.mp4" preload="auto"></audio>
 
 	{#if phase === 'select'}
 		<!-- Pinned to the video's cover-fit rectangle so each name lands on

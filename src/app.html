@@ -9,17 +9,6 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<meta name="theme-color" content="#0b141a" />
 		<meta name="text-scale" content="scale" />
-		<link rel="icon" href="%sveltekit.assets%/favicon.ico" />
-		<script>
-			if (typeof VideoDecoder !== 'undefined') {
-				const opening = document.createElement('link');
-				opening.rel = 'preload';
-				opening.as = 'fetch';
-				opening.crossOrigin = 'anonymous';
-				opening.href = '%sveltekit.assets%/videos/1.mp4';
-				document.head.append(opening);
-			}
-		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

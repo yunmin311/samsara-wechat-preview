@@ -28,21 +28,26 @@
 	//      under full black.
 	import { onMount, onDestroy } from 'svelte';
 	import { base } from '$app/paths';
+	import { loadMp4 } from '../videoPlayer.js';
 	import { videoStage } from '../videoStage.svelte.js';
 
 	let { onAllocReady = null, advance = false, onWalking = null, exit = false, onExited = null } = $props();
 
-	const clip = n => `${base}/videos/${n}.mp4`;
+	const supported = videoStage.supported;
 
 	let audio5El = $state(null);
 	let audio6El = $state(null);
 	let audio7El = $state(null);
+	let destroyed = false;
 	let advanceStarted = false;
 	let exitStarted = false;
 
 	// True once 6.mp4 has ended: swaps the frozen canvas for the two
 	// crossfading walk layers.
 	let walking = $state(false);
+
+	let media6Promise = null;
+	let media7Promise = null;
 
 	function startWalking() {
 		if (walking) return;
@@ -58,23 +63,102 @@
 		// thing making that entrance late.
 		new Image().src = `${base}/images/stairwell.jpg`;
 
-		videoStage.play(clip(5), { audio: audio5El, next: clip(6), onEnded: () => onAllocReady?.() });
+		if (!supported) {
+			videoStage.playFallback(`${base}/videos/5.mp4`, { onEnded: () => onAllocReady?.() });
+			startAudio(audio5El);
+			return;
+		}
+
+		(async () => {
+			try {
+				// Pre-fetch the follow-up clips while 5.mp4 plays and the
+				// player allocates stats, so each switch is instant.
+				media6Promise = loadMp4(`${base}/videos/6.mp4`);
+				media6Promise.catch(() => {});
+				media7Promise = loadMp4(`${base}/videos/7.mp4`);
+				media7Promise.catch(() => {});
+				await videoStage.play(`${base}/videos/5.mp4`, { loop: false, onEnded: () => onAllocReady?.() });
+			} catch (err) {
+				// A missing/broken clip shouldn't leave the screen stuck with
+				// no signal to the rest of the scene -- notify regardless.
+				if (destroyed) return;
+				console.error('[StairwellBackground] video failed', err);
+				onAllocReady?.();
+			}
+		})();
+
+		startAudio(audio5El);
 	});
 
+	// `advance` flips exactly once (allocation confirmed); play 6.mp4.
 	$effect(() => {
 		if (!advance || advanceStarted) return;
 		advanceStarted = true;
-		videoStage.play(clip(6), { audio: audio6El, next: clip(7), onEnded: startWalking });
+		audio5El?.pause();
+		if (audio6El) {
+			audio6El.currentTime = 0;
+			audio6El.play().catch(() => {});
+		}
+		if (!supported) {
+			videoStage.playFallback(`${base}/videos/6.mp4`, { onEnded: startWalking });
+			return;
+		}
+		(async () => {
+			try {
+				await media6Promise;
+				if (destroyed) return;
+				await videoStage.play(`${base}/videos/6.mp4`, { loop: false, onEnded: startWalking });
+			} catch (err) {
+				if (destroyed) return;
+				console.error('[StairwellBackground] descent video failed', err);
+				startWalking();
+			}
+		})();
 	});
 
+	// `exit` flips exactly once (View Summary clicked); play 7.mp4 over
+	// everything -- the walk layers unmount so the shared canvas underneath
+	// (where the clip renders) is visible again.
 	$effect(() => {
 		if (!exit || exitStarted) return;
 		exitStarted = true;
 		walking = false;
-		videoStage.play(clip(7), { audio: audio7El, next: clip(8), onEnded: () => onExited?.() });
+		audio6El?.pause();
+		if (audio7El) {
+			audio7El.currentTime = 0;
+			audio7El.play().catch(() => {});
+		}
+		if (!supported) {
+			videoStage.playFallback(`${base}/videos/7.mp4`, { onEnded: () => onExited?.() });
+			return;
+		}
+		(async () => {
+			try {
+				await media7Promise;
+				if (destroyed) return;
+				await videoStage.play(`${base}/videos/7.mp4`, { loop: false, onEnded: () => onExited?.() });
+			} catch (err) {
+				if (destroyed) return;
+				console.error('[StairwellBackground] exit video failed', err);
+				onExited?.();
+			}
+		})();
 	});
 
+	// Same defensive autoplay-with-sound pattern used in CityIntro: the
+	// preceding click's gesture may have gone stale by the time playback
+	// starts -- try immediately, and if refused, retry on the next input.
+	function startAudio(el) {
+		if (!el) return;
+		el.play().catch(() => {
+			const resume = () => el?.play().catch(() => {});
+			window.addEventListener('pointerdown', resume, { once: true, capture: true });
+			window.addEventListener('keydown', resume, { once: true, capture: true });
+		});
+	}
+
 	onDestroy(() => {
+		destroyed = true;
 		audio5El?.pause();
 		audio6El?.pause();
 		audio7El?.pause();
@@ -95,9 +179,9 @@
 		<div class="walk-layer late" style="background-image: url('{base}/images/stairwell.jpg');"></div>
 	</div>
 {/if}
-<audio bind:this={audio5El} src="{base}/audios/5.m4a" preload="none"></audio>
-<audio bind:this={audio6El} src="{base}/audios/6.m4a" preload="none"></audio>
-<audio bind:this={audio7El} src="{base}/audios/7.m4a" preload="none"></audio>
+<audio bind:this={audio5El} src="{base}/videos/5.mp4" preload="auto"></audio>
+<audio bind:this={audio6El} src="{base}/videos/6.mp4" preload="auto"></audio>
+<audio bind:this={audio7El} src="{base}/videos/7.mp4" preload="auto"></audio>
 
 <style>
 	/* Slightly overscanned so the bob's vertical drift never uncovers the

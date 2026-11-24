@@ -2,8 +2,10 @@
 	import { observeGameViewport } from '../gameViewport.js';
 	import { fitRectStyle } from '../components/videoFit.js';
 	import { onMount } from 'svelte';
+	import { base } from '$app/paths';
 	import { draft, goToScreen } from '../stores.js';
 	import { core } from '../game/core.js';
+	import { loadMp4, webCodecsSupported } from '../components/videoPlayer.js';
 	import { drawTalents as drawTalentsFrom } from '../game/talentDraw.js';
 	import COUNTRIES from '../game/functions/countries.js';
 	import { t } from '../i18n.js';
@@ -38,10 +40,19 @@
 	let overlayStyle = $derived(fitRectStyle(cw, ch, VIDEO_W, VIDEO_H));
 
 	onMount(() => {
-		return observeGameViewport(({ width, height }) => {
+		const stopObserving = observeGameViewport(({ width, height }) => {
 			cw = width;
 			ch = height;
 		});
+
+		// Kicked off as early as this screen mounts (not on the orientation
+		// click) so 5.mp4 has the longest possible head start -- StairwellBackground's
+		// own loadMp4() call for the same URL then just awaits this same
+		// cached promise instead of starting a fresh fetch, closing the gap
+		// that used to show as a black flash while Trajectory waited on it.
+		if (webCodecsSupported()) loadMp4(`${base}/videos/5.mp4`).catch(() => {});
+
+		return stopObserving;
 	});
 
 	// Country -> orientation -> property used to be three separate scenes

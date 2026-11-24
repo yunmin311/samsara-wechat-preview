@@ -32,7 +32,7 @@
 	<Background screen={$screen} />
 {/if}
 
-{#if ready || $screen === 'CITYINTRO'}
+{#if ready}
 	<Current />
 {:else}
 	<div class="loading">♀Samsara</div>

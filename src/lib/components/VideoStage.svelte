@@ -38,8 +38,7 @@
 <div class="video-stage" bind:this={stageEl}>
 	{#if videoStage.supported}
 		<canvas bind:this={canvasEl}></canvas>
-	{/if}
-	{#if videoStage.fallback.key}
+	{:else}
 		<!-- svelte-ignore a11y_media_has_caption -->
 		<video
 			bind:this={videoEl}
@@ -47,9 +46,7 @@
 			loop={videoStage.fallback.loop}
 			autoplay
 			playsinline
-			onplaying={() => videoStage.fallbackStarted()}
 			onended={() => videoStage.fallbackEnded()}
-			onerror={() => videoStage.fallbackEnded()}
 			use:skippable
 		></video>
 	{/if}

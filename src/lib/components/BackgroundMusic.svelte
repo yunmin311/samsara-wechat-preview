@@ -101,7 +101,7 @@
      transcode covers everything older. Each carries an explicit `type` so a
      browser that cannot play Opus skips it on the declared codec instead of
      fetching 1.3 MB to find out. -->
-<audio bind:this={el} loop preload="none">
+<audio bind:this={el} loop preload="auto">
 	<source src="{base}/audios/bg.opus" type="audio/ogg; codecs=opus" />
 	<source src="{base}/audios/bg.m4a" type="audio/mp4; codecs=mp4a.40.2" />
 </audio>

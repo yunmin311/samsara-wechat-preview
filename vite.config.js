@@ -3,8 +3,12 @@ import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { exhibitPrinter } from './scripts/exhibit-printer.js';
 
-// The exhibition launcher supplies its own base path for the local kiosk.
-const base = process.env.NODE_ENV === 'production' ? process.env.BASE_PATH || '/samsara-wechat-preview' : '';
+// Served as a GitHub Pages project site (https://marcwong.github.io/samsara/),
+// so production builds need every asset path prefixed with /samsara. Local
+// dev serves from the root instead. BASE_PATH lets the dev-branch test
+// deploy (https://marcwong.github.io/samsara_test/) override this to its
+// own repo name without touching the main production build.
+const base = process.env.NODE_ENV === 'production' ? process.env.BASE_PATH || '/samsara' : '';
 
 export default defineConfig({
 	plugins: [
@@ -14,7 +18,6 @@ export default defineConfig({
 				runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter(),
-			output: { bundleStrategy: 'single' },
 			paths: { base }
 		}),
 		// Silent receipt printing for `npm run exhibit`; inert otherwise.

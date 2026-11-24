@@ -11,7 +11,7 @@
 // screen's playback through this one shared instance means the same
 // decoder just keeps going across screen boundaries -- nothing is ever
 // destroyed at the seam, so there's nothing to flash.
-import { webCodecsSupported, loadMp4, openMp4, CanvasVideoPlayer } from './videoPlayer.js';
+import { webCodecsSupported, loadMp4, CanvasVideoPlayer } from './videoPlayer.js';
 
 const supported = webCodecsSupported();
 
@@ -56,90 +56,59 @@ class VideoStage {
 	// to the <video> fallback for the rest of the session -- a device that
 	// failed one H.264 stream will fail the next seven the same way.
 	#demoted = false;
-	#sequence = 0;
-	#stopSound = null;
-	#fallbackOnStarted = null;
 
-	// Prime the element inside the visitor's tap on browsers that require
-	// user activation. Start the audible track on the first painted frame.
-	#soundtrack(audio, rate) {
-		this.#stopSound?.();
-		this.#stopSound = null;
-		if (!audio) return;
-		audio.playbackRate = rate;
-		audio.currentTime = 0;
-		if (navigator.userActivation?.isActive) {
-			audio.play().catch(() => {});
-			audio.pause();
+	// Loads (via videoPlayer.js's shared URL cache) and plays a clip on the
+	// shared canvas. Rejects if this clip fails to fetch outright; a demux
+	// or DECODE failure instead demotes this and every subsequent clip to
+	// the shared <video> element, replaying the current one there so the
+	// screen flow (which hangs on onEnded) never stalls. Fallback playback
+	// is muted: on the WebCodecs path each screen already plays the clip's
+	// soundtrack through its own <audio>, and that keeps working -- an
+	// unmuted fallback would double it.
+	async play(url, { loop = false, onEnded = null, rate = 1, align = null, alignOut = null } = {}) {
+		if (this.#demoted || !this.#player) {
+			this.playFallback(url, { loop, rate, muted: true, onEnded });
+			return;
 		}
-		let active = true;
-		const disarm = () => {
-			window.removeEventListener('pointerdown', start, true);
-			window.removeEventListener('keydown', start, true);
-		};
-		const start = () => {
-			if (!active) return;
-			audio.play().then(disarm).catch(() => {
-				if (!active) return;
-				window.addEventListener('pointerdown', start, true);
-				window.addEventListener('keydown', start, true);
-			});
-		};
-		this.#stopSound = () => { active = false; disarm(); audio.pause(); };
-		return start;
-	}
-
-	async play(url, { loop = false, onEnded = null, rate = 1, align = null, alignOut = null, audio = null, next = null, onStarted = null } = {}) {
-		const sequence = ++this.#sequence;
-		const startSound = this.#soundtrack(audio, rate);
-		const started = () => { startSound?.(); onStarted?.(); };
-		const native = () => this.playFallback(url, { loop, rate, muted: true, onEnded, onStarted: started });
-		if (this.#demoted || !this.#player) { native(); return; }
-
-		const fallback = () => {
-			if (sequence !== this.#sequence) return;
-			this.#demoted = true;
-			this.#player.stop(false);
-			if (audio) { audio.pause(); audio.currentTime = 0; }
-			native();
-		};
+		let media;
 		try {
-			const media = await openMp4(url);
-			if (sequence !== this.#sequence) return;
-			this.#player.play(media, { loop, onEnded, rate, align, alignOut, onStarted: started, onError: fallback });
-			if (next) media.finished.then(() => {
-				if (sequence === this.#sequence && !this.#demoted) return loadMp4(next);
-			}).catch(() => {}); // an actual play retries a failed prefetch
-		} catch {
-			fallback();
+			media = await loadMp4(url);
+		} catch (err) {
+			console.error('[videoStage] demux failed, demoting to <video>', err);
+			this.#demoted = true;
+			this.playFallback(url, { loop, rate, muted: true, onEnded });
+			return;
 		}
+		this.#player.play(media, {
+			loop,
+			onEnded,
+			rate,
+			align,
+			alignOut,
+			onError: () => {
+				this.#demoted = true;
+				this.playFallback(url, { loop, rate, muted: true, onEnded });
+			},
+		});
 	}
 
-	playFallback(url, { loop = false, rate = 1, muted = false, onEnded = null, onStarted = null } = {}) {
+	// Fallback path: update the shared <video>'s reactive props. `key`
+	// always increments so VideoStage.svelte's $effect reruns even if a
+	// screen ever plays the same URL twice in a row.
+	playFallback(url, { loop = false, rate = 1, muted = false, onEnded = null } = {}) {
 		this.#fallbackOnEnded = onEnded;
-		this.#fallbackOnStarted = onStarted;
 		this.fallback = { src: url, loop, rate, muted, key: this.fallback.key + 1 };
 	}
 
-	fallbackStarted() {
-		this.#fallbackOnStarted?.();
-		this.#fallbackOnStarted = null;
-	}
-
 	fallbackEnded() {
-		const done = this.#fallbackOnEnded;
-		this.#fallbackOnEnded = null;
-		done?.();
+		this.#fallbackOnEnded?.();
 	}
 
 	stop() {
-		this.#stopSound?.();
 		this.#player?.stop();
 	}
 
 	detach() {
-		this.#sequence++;
-		this.#stopSound?.();
 		this.#resizeObserver?.disconnect();
 		this.#resizeObserver = null;
 		this.#player?.stop();

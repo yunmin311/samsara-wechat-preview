@@ -147,7 +147,6 @@
 	// than cutting it short or holding a frozen frame afterwards.
 	const DURATION_MS = 7042;
 	let restarting = $state(false);
-	let restartFrame = 0;
 
 	// The panel dissolves over the clip's first ~20% (~1.4s), which is the
 	// stretch 8.mp4 spends in full cloud before the morgue resolves --
@@ -160,26 +159,29 @@
 		restarting = true;
 		clearTimeout(idleTimer);
 
-		let start;
+		// The clip itself carries the camera move, so nothing here re-times
+		// it -- restartProgress is plain elapsed fraction (NOT eased) and is
+		// only used to cross-fade this screen's own layers over the footage.
+		// Easing it would desynchronise those fades from the picture.
+		if (videoStage.supported) videoStage.play(RESTART_CLIP, { alignOut: ALIGN_OUT_8 }).catch(() => {});
+		else videoStage.playFallback(RESTART_CLIP, { muted: true });
+
+		const start = performance.now();
 		function tick(now) {
 			const t = Math.min(1, (now - start) / DURATION_MS);
 			restartProgress.set(t);
-			if (t < 1) restartFrame = requestAnimationFrame(tick);
-		}
-		videoStage.play(RESTART_CLIP, {
-			alignOut: ALIGN_OUT_8,
-			onStarted: () => {
-				cancelAnimationFrame(restartFrame);
-				start = performance.now();
-				restartFrame = requestAnimationFrame(tick);
-			},
-			onEnded: () => {
-				cancelAnimationFrame(restartFrame);
+			if (t < 1) requestAnimationFrame(tick);
+			else {
 				draft.set(emptyDraft());
 				goToScreen('CITYINTRO');
+				// Both consumers of this store (this screen and Background)
+				// unmount on the line above -- resetting here means the NEXT
+				// life's Summary doesn't inherit a finished transition (fg
+				// invisible, clouds faded out) from this one.
 				restartProgress.set(0);
 			}
-		});
+		}
+		requestAnimationFrame(tick);
 	}
 
 	// Kiosk-style idle reset: this screen is a dead end otherwise (no
@@ -231,7 +233,7 @@
 		// the summary, so the click starts playback instead of a network
 		// wait. loadMp4 is URL-cached, so onAgain's play() reuses this.
 		if (videoStage.supported) loadMp4(RESTART_CLIP).catch(() => {});
-		return () => { clearTimeout(idleTimer); cancelAnimationFrame(restartFrame); };
+		return () => clearTimeout(idleTimer);
 	});
 
 	// printText's own header block (built in Trajectory.svelte, before any

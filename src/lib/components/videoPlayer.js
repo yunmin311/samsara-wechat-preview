@@ -40,113 +40,81 @@ function extractDescription(file, trackId) {
 	return undefined;
 }
 
-// A clip has two milestones. Playback can start with a short runway of
-// original samples. A prefetch for the following scene waits for this one
-// to finish downloading, so the two never compete during a cold opening.
+// Keyed by URL so a clip prefetched ahead of need (e.g. while an earlier
+// screen is still on screen) and the same clip's own later loadMp4() call
+// share one fetch+demux instead of racing two -- the second caller just
+// awaits whatever's already in flight or resolved.
 const mediaCache = new Map();
 
-function streamFor(url) {
-	let media = mediaCache.get(url);
-	if (media) return media;
-
-	let makePlayable, failOpening;
-	const playable = new Promise((resolve, reject) => {
-		makePlayable = resolve;
-		failOpening = reject;
-	});
-	playable.catch(() => {}); // a prefetch may only observe finished
-	media = { config: null, chunks: [], complete: false, error: null, playable };
-	mediaCache.set(url, media);
-	media.finished = readMp4(url, media, () => makePlayable(media)).catch(error => {
-		media.error = error;
-		mediaCache.delete(url);
-		failOpening(error);
-		throw error;
-	});
-	media.finished.catch(() => {}); // a player may only observe playable
-	return media;
-}
-
-export function openMp4(url) {
-	return streamFor(url).playable;
-}
-
+// fetch -> ArrayBuffer -> demux. Resolves to a reusable media object
+// ({ config, chunks }) that can be handed to CanvasVideoPlayer.play() any
+// number of times -- chunks are just compressed samples, cheap to keep.
 export function loadMp4(url) {
-	return streamFor(url).finished;
+	let promise = mediaCache.get(url);
+	if (!promise) {
+		promise = fetchAndDemux(url);
+		mediaCache.set(url, promise);
+		// A failed load shouldn't poison the cache forever -- a later retry
+		// (or a different caller) should get a fresh fetch, not the same
+		// rejection replayed.
+		promise.catch(() => mediaCache.delete(url));
+	}
+	return promise;
 }
 
-async function readMp4(url, media, playable) {
-	const response = await fetch(url);
-	if (!response.ok) throw new Error('HTTP ' + response.status + ' loading ' + url);
-	const file = createFile();
-	let sampleCount = 0;
-	let bufferSamples = 0;
-	let offset = 0;
-	let parseError;
+async function fetchAndDemux(url) {
+	const resp = await fetch(url);
+	if (!resp.ok) throw new Error(`fetch ${url}: HTTP ${resp.status}`);
+	const buffer = await resp.arrayBuffer();
 
-	file.onError = (...args) => { parseError = new Error('Invalid MP4 ' + url + ': ' + args.join(' ')); };
-	file.onReady = info => {
-		const track = info.videoTracks[0];
-		if (!track) { parseError = new Error('Missing video track in ' + url); return; }
-		sampleCount = track.nb_samples;
-		// The sample table includes the exact presentation times before the
-		// video payload arrives, including frames stored out of display order.
-		const samples = file.getTrackSamplesInfo(track.id);
-		const lastCts = samples.reduce((last, sample) => Math.max(last, sample.cts), 0);
-		media.endTimestamp = Math.round(1e6 * lastCts / track.timescale);
-		// About one second at the file's actual frame rate, including B frames.
-		bufferSamples = Math.min(sampleCount, Math.ceil(sampleCount * track.timescale / track.duration));
-		media.config = {
-			codec: track.codec,
-			codedWidth: track.video.width,
-			codedHeight: track.video.height,
-			description: extractDescription(file, track.id)
-		};
-		file.setExtractionOptions(track.id, null, { nbSamples: 8 });
-		file.start();
-	};
-	file.onSamples = (id, _, samples) => {
-		for (const s of samples) {
-			media.chunks.push(new EncodedVideoChunk({
-				type: s.is_sync ? 'key' : 'delta',
-				timestamp: Math.round(1e6 * s.cts / s.timescale),
-				duration: Math.round(1e6 * s.duration / s.timescale),
-				data: s.data
-			}));
-		}
-		file.releaseUsedSamples(id, media.chunks.length);
-		if (media.chunks.length >= bufferSamples) playable();
-	};
+	return new Promise((resolve, reject) => {
+		const file = createFile();
+		const chunks = [];
+		let config = null;
+		let nbSamples = 0;
 
-	function append(bytes) {
-		const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-		file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer, offset));
-		offset += bytes.byteLength;
-		if (parseError) throw parseError;
-	}
-	if (response.body?.getReader) {
-		const reader = response.body.getReader();
-		try {
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				append(value);
+		file.onError = e => reject(new Error(`mp4 demux failed for ${url}: ${e}`));
+		file.onReady = info => {
+			const track = info.videoTracks[0];
+			if (!track) {
+				reject(new Error(`${url} has no video track`));
+				return;
 			}
-		} catch (error) {
-			await reader.cancel().catch(() => {});
-			throw error;
-		} finally {
-			reader.releaseLock();
-		}
-	} else {
-		append(new Uint8Array(await response.arrayBuffer()));
-	}
-	file.flush();
-	if (parseError) throw parseError;
-	if (!sampleCount || media.chunks.length !== sampleCount) throw new Error('Incomplete MP4 ' + url);
-	media.complete = true;
-	playable();
-	return media;
+			nbSamples = track.nb_samples;
+			config = {
+				codec: track.codec,
+				codedWidth: track.video.width,
+				codedHeight: track.video.height,
+				description: extractDescription(file, track.id),
+			};
+			file.setExtractionOptions(track.id, null, { nbSamples: Infinity });
+			file.start();
+		};
+		file.onSamples = (id, user, samples) => {
+			for (const s of samples) {
+				chunks.push(
+					new EncodedVideoChunk({
+						type: s.is_sync ? 'key' : 'delta',
+						timestamp: Math.round((1e6 * s.cts) / s.timescale),
+						duration: Math.round((1e6 * s.duration) / s.timescale),
+						data: s.data,
+					}),
+				);
+			}
+			if (config && chunks.length >= nbSamples) resolve({ config, chunks });
+		};
+
+		file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer, 0));
+		file.flush();
+		// The whole file was appended in one shot, so all callbacks have
+		// fired by the next tick -- this settles the promise if the sample
+		// count bookkeeping above never tripped (and rejects cleanly if
+		// parsing silently produced nothing).
+		setTimeout(() => {
+			if (config && chunks.length > 0) resolve({ config, chunks });
+			else reject(new Error(`mp4 demux produced no samples for ${url}`));
+		}, 0);
+	});
 }
 
 export class CanvasVideoPlayer {
@@ -267,7 +235,7 @@ export class CanvasVideoPlayer {
 	// The clip's end in media time comes from the chunk timestamps rather
 	// than a container duration, so it is exact for the frames we actually
 	// present (max, not last: decode order is not presentation order).
-	play(media, { loop = false, onEnded = null, rate = 1, align = null, alignOut = null, onStarted = null, onError = null } = {}) {
+	play(media, { loop = false, onEnded = null, rate = 1, align = null, alignOut = null, onError = null } = {}) {
 		this.stop(false); // keep #lastFrame: bridges the switch between clips
 		this.#align = align ? { ...align, durationUs: align.durationMs * 1000 } : null;
 		const { config, chunks } = media;
@@ -275,7 +243,7 @@ export class CanvasVideoPlayer {
 			? {
 					...alignOut,
 					durationUs: alignOut.durationMs * 1000,
-					endUs: media.endTimestamp,
+					endUs: chunks.reduce((m, c) => (c.timestamp > m ? c.timestamp : m), 0),
 				}
 			: null;
 
@@ -322,12 +290,8 @@ export class CanvasVideoPlayer {
 		// frame, presents that, and completes exactly as a normal end-of-clip
 		// would -- same onEnded/loop handling, just without the wait. A no-op
 		// on looping playback (nothing to "skip to" on a clip with no end).
-		const offSkip = onSkip(async () => {
+		const offSkip = onSkip(() => {
 			if (loop || session.aborted || ended) return;
-			if (!media.complete) {
-				try { await media.finished; } catch { return; }
-				if (session.aborted || ended) return;
-			}
 			ended = true;
 			cancelAnimationFrame(session.raf);
 			clearInterval(session.timer);
@@ -372,7 +336,7 @@ export class CanvasVideoPlayer {
 			while (feedIndex < chunks.length && decoder.decodeQueueSize < 6 && frames.length < 6) {
 				decoder.decode(chunks[feedIndex++]);
 			}
-			if (media.complete && feedIndex >= chunks.length && !session.flushing) {
+			if (feedIndex >= chunks.length && !session.flushing) {
 				session.flushing = true;
 				decoder
 					.flush()
@@ -387,11 +351,6 @@ export class CanvasVideoPlayer {
 		let ended = false;
 		const tick = now => {
 			if (session.aborted || ended) return;
-			if (media.error) {
-				this.stop(false);
-				onError?.(media.error);
-				return;
-			}
 			pump();
 			if (frames.length) {
 				// Decoder outputs arrive in presentation order; anchor the
@@ -401,11 +360,8 @@ export class CanvasVideoPlayer {
 				while (frames.length && frames[0].timestamp <= mediaTimeUs) {
 					const frame = frames.shift();
 					const lastEligible = !frames.length || frames[0].timestamp > mediaTimeUs;
-					if (lastEligible) {
-						this.#present(frame);
-						onStarted?.();
-						onStarted = null;
-					} else frame.close(); // running late: drop, don't draw stale frames
+					if (lastEligible) this.#present(frame);
+					else frame.close(); // running late: drop, don't draw stale frames
 				}
 			}
 			if (flushDone && frames.length === 0) {
