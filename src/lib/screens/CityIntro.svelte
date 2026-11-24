@@ -153,6 +153,7 @@
 				const load4 = () => loadMp4(`${mediaBase}/videos/4.mp4`);
 				media4Promise = mobileMedia ? media3Promise.then(load4, load4) : load4();
 				media4Promise.catch(() => {});
+				if (mobileMedia) media4Promise.then(() => loadMp4(`${mediaBase}/videos/5.mp4`)).catch(() => {});
 				await videoStage.play(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
 				phase = 'loop';
 				startLoopAudio();
@@ -292,6 +293,7 @@
 
 <div
 	class="intro"
+	class:wechat={mobileMedia}
 	class:clickable={phase === 'loop' || phase === 'frozen'}
 	bind:this={containerEl}
 	onclick={advance}
@@ -384,6 +386,16 @@
 </div>
 
 <style>
+	@font-face {
+		font-family: 'Samsara Intro';
+		src: url('/wechat/fonts/intro.woff2') format('woff2');
+		font-weight: 100 900;
+		font-display: swap;
+	}
+	.intro.wechat {
+		font-family: 'Agency FB', Consolas, Arial, 'Samsara Intro', 'Samsara SC', sans-serif;
+	}
+
 	/* Transparent: the actual picture comes from the shared VideoStage
 	   canvas (z-index -1, rendered by +page.svelte), which sits underneath
 	   this whole screen's UI overlay. */

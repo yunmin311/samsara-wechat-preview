@@ -79,7 +79,7 @@ export async function playClipAudio(el) {
 }
 
 async function fetchAndDemux(url) {
-	const resp = await fetch(url);
+	const resp = await fetch(url, mobileMedia ? { priority: 'high' } : undefined);
 	if (!resp.ok) throw new Error(`fetch ${url}: HTTP ${resp.status}`);
 	const buffer = await resp.arrayBuffer();
 	const audioBlob = mobileMedia ? new Blob([buffer], { type: 'video/mp4' }) : undefined;

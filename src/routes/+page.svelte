@@ -17,8 +17,10 @@
 	onMount(async () => {
 		wireNotifications();
 		if (mobileMedia && webCodecsSupported()) {
-			// Let the first interactive transition finish downloading before the life data.
-			await loadMp4(`${mediaBase}/videos/2.mp4`).catch(() => {});
+			// Country selection is the first screen that can lead into the life data.
+			for (const clip of [2, 3]) {
+				await loadMp4(`${mediaBase}/videos/${clip}.mp4`).catch(() => {});
+			}
 		}
 		await initGame();
 		ready = true;
