@@ -24,6 +24,7 @@ it('can play the opening samples while the rest of the same download is pending'
 	stream.enqueue(clip.subarray(0, 640000));
 	const media = await playback;
 	expect(media.chunks[0].type).toBe('key');
+	const indexedEnd = media.endTimestamp;
 	const earlyCount = media.chunks.length;
 	expect(earlyCount).toBeGreaterThan(1);
 	expect(media.complete).toBe(false);
@@ -32,6 +33,7 @@ it('can play the opening samples while the rest of the same download is pending'
 	expect(await downloaded).toBe(media);
 	expect(media.chunks.length).toBeGreaterThan(earlyCount);
 	expect(media.complete).toBe(true);
+	expect(indexedEnd).toBe(Math.max(...media.chunks.map(chunk => chunk.timestamp)));
 	expect(fetch).toHaveBeenCalledTimes(1);
 });
 

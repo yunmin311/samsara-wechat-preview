@@ -104,8 +104,7 @@ class VideoStage {
 			native();
 		};
 		try {
-			// The outgoing warp of the restart movie uses its exact last PTS.
-			const media = await (alignOut ? loadMp4(url) : openMp4(url));
+			const media = await openMp4(url);
 			if (sequence !== this.#sequence) return;
 			this.#player.play(media, { loop, onEnded, rate, align, alignOut, onStarted: started, onError: fallback });
 			if (next) media.finished.then(() => {

@@ -89,6 +89,11 @@ async function readMp4(url, media, playable) {
 		const track = info.videoTracks[0];
 		if (!track) { parseError = new Error('Missing video track in ' + url); return; }
 		sampleCount = track.nb_samples;
+		// The sample table includes the exact presentation times before the
+		// video payload arrives, including frames stored out of display order.
+		const samples = file.getTrackSamplesInfo(track.id);
+		const lastCts = samples.reduce((last, sample) => Math.max(last, sample.cts), 0);
+		media.endTimestamp = Math.round(1e6 * lastCts / track.timescale);
 		// About one second at the file's actual frame rate, including B frames.
 		bufferSamples = Math.min(sampleCount, Math.ceil(sampleCount * track.timescale / track.duration));
 		media.config = {
@@ -270,7 +275,7 @@ export class CanvasVideoPlayer {
 			? {
 					...alignOut,
 					durationUs: alignOut.durationMs * 1000,
-					endUs: chunks.reduce((m, c) => (c.timestamp > m ? c.timestamp : m), 0),
+					endUs: media.endTimestamp,
 				}
 			: null;
 
