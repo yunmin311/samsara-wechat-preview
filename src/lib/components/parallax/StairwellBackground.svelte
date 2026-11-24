@@ -27,8 +27,8 @@
 	//      its end and Trajectory hands over to the SUMMARY screen from
 	//      under full black.
 	import { onMount, onDestroy } from 'svelte';
-	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
-	import { loadMp4, playClipAudio } from '../videoPlayer.js';
+	import { base } from '$app/paths';
+	import { loadMp4 } from '../videoPlayer.js';
 	import { videoStage } from '../videoStage.svelte.js';
 
 	let { onAllocReady = null, advance = false, onWalking = null, exit = false, onExited = null } = $props();
@@ -61,10 +61,10 @@
 		// then 5.mp4 and 6.mp4 (21s combined) have already played, so this
 		// warms the HTTP cache with time to spare and the image is never the
 		// thing making that entrance late.
-		new Image().src = `${mediaBase}/images/stairwell.jpg`;
+		new Image().src = `${base}/images/stairwell.jpg`;
 
 		if (!supported) {
-			videoStage.playFallback(`${mediaBase}/videos/5.mp4`, { onEnded: () => onAllocReady?.() });
+			videoStage.playFallback(`${base}/videos/5.mp4`, { onEnded: () => onAllocReady?.() });
 			startAudio(audio5El);
 			return;
 		}
@@ -73,12 +73,11 @@
 			try {
 				// Pre-fetch the follow-up clips while 5.mp4 plays and the
 				// player allocates stats, so each switch is instant.
-				media6Promise = loadMp4(`${mediaBase}/videos/6.mp4`);
+				media6Promise = loadMp4(`${base}/videos/6.mp4`);
 				media6Promise.catch(() => {});
-				const warmExit = () => loadMp4(`${mediaBase}/videos/7.mp4`);
-				media7Promise = mobileMedia ? media6Promise.then(warmExit, warmExit) : warmExit();
+				media7Promise = loadMp4(`${base}/videos/7.mp4`);
 				media7Promise.catch(() => {});
-				await videoStage.play(`${mediaBase}/videos/5.mp4`, { loop: false, onEnded: () => onAllocReady?.() });
+				await videoStage.play(`${base}/videos/5.mp4`, { loop: false, onEnded: () => onAllocReady?.() });
 			} catch (err) {
 				// A missing/broken clip shouldn't leave the screen stuck with
 				// no signal to the rest of the scene -- notify regardless.
@@ -98,17 +97,17 @@
 		audio5El?.pause();
 		if (audio6El) {
 			audio6El.currentTime = 0;
-			playClipAudio(audio6El).catch(() => {});
+			audio6El.play().catch(() => {});
 		}
 		if (!supported) {
-			videoStage.playFallback(`${mediaBase}/videos/6.mp4`, { onEnded: startWalking });
+			videoStage.playFallback(`${base}/videos/6.mp4`, { onEnded: startWalking });
 			return;
 		}
 		(async () => {
 			try {
 				await media6Promise;
 				if (destroyed) return;
-				await videoStage.play(`${mediaBase}/videos/6.mp4`, { loop: false, onEnded: startWalking });
+				await videoStage.play(`${base}/videos/6.mp4`, { loop: false, onEnded: startWalking });
 			} catch (err) {
 				if (destroyed) return;
 				console.error('[StairwellBackground] descent video failed', err);
@@ -127,17 +126,17 @@
 		audio6El?.pause();
 		if (audio7El) {
 			audio7El.currentTime = 0;
-			playClipAudio(audio7El).catch(() => {});
+			audio7El.play().catch(() => {});
 		}
 		if (!supported) {
-			videoStage.playFallback(`${mediaBase}/videos/7.mp4`, { onEnded: () => onExited?.() });
+			videoStage.playFallback(`${base}/videos/7.mp4`, { onEnded: () => onExited?.() });
 			return;
 		}
 		(async () => {
 			try {
 				await media7Promise;
 				if (destroyed) return;
-				await videoStage.play(`${mediaBase}/videos/7.mp4`, { loop: false, onEnded: () => onExited?.() });
+				await videoStage.play(`${base}/videos/7.mp4`, { loop: false, onEnded: () => onExited?.() });
 			} catch (err) {
 				if (destroyed) return;
 				console.error('[StairwellBackground] exit video failed', err);
@@ -151,8 +150,8 @@
 	// starts -- try immediately, and if refused, retry on the next input.
 	function startAudio(el) {
 		if (!el) return;
-		playClipAudio(el).catch(() => {
-			const resume = () => playClipAudio(el).catch(() => {});
+		el.play().catch(() => {
+			const resume = () => el?.play().catch(() => {});
 			window.addEventListener('pointerdown', resume, { once: true, capture: true });
 			window.addEventListener('keydown', resume, { once: true, capture: true });
 		});
@@ -176,13 +175,13 @@
 	     shared VideoStage canvas (z-index -1), which normal stacking order
 	     already gives it. -->
 	<div class="walk-bob" aria-hidden="true">
-		<div class="walk-layer" style="background-image: url('{mediaBase}/images/stairwell.jpg');"></div>
-		<div class="walk-layer late" style="background-image: url('{mediaBase}/images/stairwell.jpg');"></div>
+		<div class="walk-layer" style="background-image: url('{base}/images/stairwell.jpg');"></div>
+		<div class="walk-layer late" style="background-image: url('{base}/images/stairwell.jpg');"></div>
 	</div>
 {/if}
-<audio bind:this={audio5El} src="{mediaBase}/videos/5.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
-<audio bind:this={audio6El} src="{mediaBase}/videos/6.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
-<audio bind:this={audio7El} src="{mediaBase}/videos/7.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
+<audio bind:this={audio5El} src="{base}/videos/5.mp4" preload="auto"></audio>
+<audio bind:this={audio6El} src="{base}/videos/6.mp4" preload="auto"></audio>
+<audio bind:this={audio7El} src="{base}/videos/7.mp4" preload="auto"></audio>
 
 <style>
 	/* Slightly overscanned so the bob's vertical drift never uncovers the

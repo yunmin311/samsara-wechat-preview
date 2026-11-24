@@ -1,6 +1,4 @@
 <script>
-	import { loadMp4, webCodecsSupported } from '$lib/components/videoPlayer.js';
-	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { onMount } from 'svelte';
 	import { screen } from '$lib/stores.js';
 	import { initGame } from '$lib/game/core.js';
@@ -16,12 +14,6 @@
 
 	onMount(async () => {
 		wireNotifications();
-		if (mobileMedia && webCodecsSupported()) {
-			// Country selection is the first screen that can lead into the life data.
-			for (const clip of [2, 3]) {
-				await loadMp4(`${mediaBase}/videos/${clip}.mp4`).catch(() => {});
-			}
-		}
 		await initGame();
 		ready = true;
 	});
@@ -31,7 +23,7 @@
      this can't be conditionally rendered per-screen the way it used to be. -->
 <VideoStage />
 
-<!-- Also persistent, and deliberately outside the {#if ready || (mobileMedia && $screen === 'CITYINTRO')} gate below:
+<!-- Also persistent, and deliberately outside the {#if ready} gate below:
      the background track should be running before the game data finishes
      loading, not after. -->
 <BackgroundMusic />
@@ -40,7 +32,7 @@
 	<Background screen={$screen} />
 {/if}
 
-{#if ready || (mobileMedia && $screen === 'CITYINTRO')}
+{#if ready}
 	<Current />
 {:else}
 	<div class="loading">♀Samsara</div>

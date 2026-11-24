@@ -2,7 +2,7 @@
 	import { observeGameViewport } from '../gameViewport.js';
 	import { fitRectStyle } from '../components/videoFit.js';
 	import { onMount } from 'svelte';
-	import { mediaBase } from '$lib/clipPath.js';
+	import { base } from '$app/paths';
 	import { draft, goToScreen } from '../stores.js';
 	import { core } from '../game/core.js';
 	import { loadMp4, webCodecsSupported } from '../components/videoPlayer.js';
@@ -50,7 +50,7 @@
 		// own loadMp4() call for the same URL then just awaits this same
 		// cached promise instead of starting a fresh fetch, closing the gap
 		// that used to show as a black flash while Trajectory waited on it.
-		if (webCodecsSupported()) loadMp4(`${mediaBase}/videos/5.mp4`).catch(() => {});
+		if (webCodecsSupported()) loadMp4(`${base}/videos/5.mp4`).catch(() => {});
 
 		return stopObserving;
 	});
@@ -173,7 +173,7 @@
 	   allocation -- one consistent style for everything that now lives on
 	   this one screen. */
 	:global(.crt-screen) {
-		font-family: 'Courier New', Courier, var(--interface-font, 'Samsara SC'), 'Samsara SC', monospace;
+		font-family: 'Courier New', Courier, 'Samsara SC', monospace;
 		/* Enhances the blocky, unhinted terminal-font look (classic Unix
 		   console / BIOS setup utility) instead of the browser's default
 		   antialiased smoothing, which softened every glyph's edges into a

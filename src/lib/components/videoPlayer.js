@@ -16,7 +16,6 @@
 // backpressure logic in play().
 
 import { createFile, DataStream, MP4BoxBuffer } from 'mp4box';
-import { mobileMedia } from '../clipPath.js';
 import { onSkip } from '../skip.js';
 import { fitScale, STAGE_BG } from './videoFit.js';
 
@@ -63,26 +62,10 @@ export function loadMp4(url) {
 	return promise;
 }
 
-// The Android WeChat audio element can issue a second range request for the
-// same movie even after fetch() has downloaded it. Give both players the
-// same bytes. The eight object URLs live alongside the session's clip cache.
-export async function playClipAudio(el) {
-	if (!el?.isConnected) return;
-	if (mobileMedia && webCodecsSupported() && !el.src.startsWith('blob:')) {
-		const url = el.getAttribute('src');
-		const media = await loadMp4(url);
-		if (!el.isConnected) return;
-		media.audioUrl ??= URL.createObjectURL(media.audioBlob);
-		el.src = media.audioUrl;
-	}
-	return el.play();
-}
-
 async function fetchAndDemux(url) {
-	const resp = await fetch(url, mobileMedia ? { priority: 'high' } : undefined);
+	const resp = await fetch(url);
 	if (!resp.ok) throw new Error(`fetch ${url}: HTTP ${resp.status}`);
 	const buffer = await resp.arrayBuffer();
-	const audioBlob = mobileMedia ? new Blob([buffer], { type: 'video/mp4' }) : undefined;
 
 	return new Promise((resolve, reject) => {
 		const file = createFile();
@@ -118,7 +101,7 @@ async function fetchAndDemux(url) {
 					}),
 				);
 			}
-			if (config && chunks.length >= nbSamples) resolve({ config, chunks, audioBlob });
+			if (config && chunks.length >= nbSamples) resolve({ config, chunks });
 		};
 
 		file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer, 0));
@@ -128,7 +111,7 @@ async function fetchAndDemux(url) {
 		// count bookkeeping above never tripped (and rejects cleanly if
 		// parsing silently produced nothing).
 		setTimeout(() => {
-			if (config && chunks.length > 0) resolve({ config, chunks, audioBlob });
+			if (config && chunks.length > 0) resolve({ config, chunks });
 			else reject(new Error(`mp4 demux produced no samples for ${url}`));
 		}, 0);
 	});
@@ -191,8 +174,6 @@ export class CanvasVideoPlayer {
 		// transform: screen = off + s*(k*v + u). Any strip the warped rect
 		// leaves uncovered keeps the previous clip's pixels (the canvas is
 		// never cleared), which is the correct scene content there.
-		// Alignment offsets were measured in the original 1280 x 720 frame.
-		const alignScale = s * (fw / 1280);
 		const a = this.#align;
 		if (a) {
 			const t = frame.timestamp / a.durationUs;
@@ -201,8 +182,8 @@ export class CanvasVideoPlayer {
 				const remain = Math.pow(1 - Math.max(0, t), 3); // easeOutCubic
 				const kx = 1 + (a.kx - 1) * remain;
 				const ky = 1 + (a.ky - 1) * remain;
-				dx += alignScale * a.ux * remain;
-				dy += alignScale * a.uy * remain;
+				dx += s * a.ux * remain;
+				dy += s * a.uy * remain;
 				dw *= kx;
 				dh *= ky;
 			}
@@ -220,8 +201,8 @@ export class CanvasVideoPlayer {
 			const left = (b.endUs - frame.timestamp) / b.durationUs;
 			const p = 1 - Math.min(1, Math.max(0, left)); // 0 far from end, 1 at end
 			const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
-			dx += alignScale * b.ux * e;
-			dy += alignScale * b.uy * e;
+			dx += s * b.ux * e;
+			dy += s * b.uy * e;
 			dw *= 1 + (b.kx - 1) * e;
 			dh *= 1 + (b.ky - 1) * e;
 		}

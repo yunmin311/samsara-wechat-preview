@@ -18,9 +18,9 @@
 	// last-frame behavior, which is the best available there).
 	import { fitRectStyle } from '../components/videoFit.js';
 	import { onMount, onDestroy } from 'svelte';
-	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
+	import { base } from '$app/paths';
 	import { goToScreen, bgMusicScale } from '../stores.js';
-	import { loadMp4, playClipAudio } from '../components/videoPlayer.js';
+	import { loadMp4 } from '../components/videoPlayer.js';
 	import { videoStage } from '../components/videoStage.svelte.js';
 	import { CLIP_VOLUME, BG_DUCKED_SCALE } from '../audio.js';
 	import COUNTRIES from '../game/functions/countries.js';
@@ -137,7 +137,7 @@
 
 		if (!supported) {
 			phase = 'loop';
-			videoStage.playFallback(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE, muted: true });
+			videoStage.playFallback(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE, muted: true });
 			return;
 		}
 
@@ -145,21 +145,13 @@
 			try {
 				// Fetch + demux the later clips in the background while the
 				// loop plays, so each click switches instantly.
-				media2Promise = loadMp4(`${mediaBase}/videos/2.mp4`);
+				media2Promise = loadMp4(`${base}/videos/2.mp4`);
 				media2Promise.catch(() => {}); // surfaced on click instead
-				const load3 = () => loadMp4(`${mediaBase}/videos/3.mp4`);
-				media3Promise = mobileMedia ? media2Promise.then(load3, load3) : load3();
+				media3Promise = loadMp4(`${base}/videos/3.mp4`);
 				media3Promise.catch(() => {});
-				const load4 = () => loadMp4(`${mediaBase}/videos/4.mp4`);
-				media4Promise = mobileMedia ? media3Promise.then(load4, load4) : load4();
+				media4Promise = loadMp4(`${base}/videos/4.mp4`);
 				media4Promise.catch(() => {});
-				if (mobileMedia) {
-					media4Promise
-						.then(() => loadMp4(`${mediaBase}/videos/5.mp4`))
-						.then(() => loadMp4(`${mediaBase}/videos/6.mp4`))
-						.catch(() => {});
-				}
-				await videoStage.play(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
+				await videoStage.play(`${base}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
 				phase = 'loop';
 				startLoopAudio();
 			} catch (err) {
@@ -188,9 +180,9 @@
 	function startLoopAudio() {
 		if (!audio1El) return;
 		audio1El.playbackRate = LOOP_RATE;
-		playClipAudio(audio1El).catch(() => {
+		audio1El.play().catch(() => {
 			const resume = () => {
-				if (phase === 'loop') playClipAudio(audio1El).catch(() => {});
+				if (phase === 'loop') audio1El?.play().catch(() => {});
 			};
 			window.addEventListener('pointerdown', resume, { once: true, capture: true });
 			window.addEventListener('keydown', resume, { once: true, capture: true });
@@ -210,12 +202,12 @@
 			audio1El?.pause();
 			if (audio2El) {
 				audio2El.currentTime = 0;
-				playClipAudio(audio2El).catch(() => {});
+				audio2El.play().catch(() => {});
 			}
 			if (supported) {
 				try {
 					await media2Promise;
-					await videoStage.play(`${mediaBase}/videos/2.mp4`, {
+					await videoStage.play(`${base}/videos/2.mp4`, {
 						loop: false,
 						align: ALIGN_2,
 						onEnded: () => {
@@ -229,7 +221,7 @@
 			} else {
 				// unmuting is allowed now that a real click happened; 2.mp4
 				// runs at normal speed (rate defaults to 1).
-				videoStage.playFallback(`${mediaBase}/videos/2.mp4`, { onEnded: () => (phase = 'frozen') });
+				videoStage.playFallback(`${base}/videos/2.mp4`, { onEnded: () => (phase = 'frozen') });
 			}
 		} else if (phase === 'frozen') {
 			// End of 2.mp4: the click rolls 3.mp4 (the morgue wall), whose
@@ -238,12 +230,12 @@
 			phase = 'morgue';
 			if (audio3El) {
 				audio3El.currentTime = 0;
-				playClipAudio(audio3El).catch(() => {});
+				audio3El.play().catch(() => {});
 			}
 			if (supported) {
 				try {
 					await media3Promise;
-					await videoStage.play(`${mediaBase}/videos/3.mp4`, {
+					await videoStage.play(`${base}/videos/3.mp4`, {
 						loop: false,
 						align: ALIGN_3,
 						onEnded: () => {
@@ -255,7 +247,7 @@
 					phase = 'select';
 				}
 			} else {
-				videoStage.playFallback(`${mediaBase}/videos/3.mp4`, { onEnded: () => (phase = 'select') });
+				videoStage.playFallback(`${base}/videos/3.mp4`, { onEnded: () => (phase = 'select') });
 			}
 		}
 		// clicks during 'loading'/'transition'/'morgue'/'select' are ignored
@@ -272,19 +264,19 @@
 		audio3El?.pause();
 		if (audio4El) {
 			audio4El.currentTime = 0;
-			playClipAudio(audio4El).catch(() => {});
+			audio4El.play().catch(() => {});
 		}
 		const done = () => goToScreen('PLAZA', { countryCode: code });
 		if (supported) {
 			try {
 				await media4Promise;
-				await videoStage.play(`${mediaBase}/videos/4.mp4`, { loop: false, onEnded: done });
+				await videoStage.play(`${base}/videos/4.mp4`, { loop: false, onEnded: done });
 			} catch (err) {
 				console.error('[CityIntro] exit video failed', err);
 				done();
 			}
 		} else {
-			videoStage.playFallback(`${mediaBase}/videos/4.mp4`, { onEnded: done });
+			videoStage.playFallback(`${base}/videos/4.mp4`, { onEnded: done });
 		}
 	}
 
@@ -298,7 +290,6 @@
 
 <div
 	class="intro"
-	class:wechat={mobileMedia}
 	class:clickable={phase === 'loop' || phase === 'frozen'}
 	bind:this={containerEl}
 	onclick={advance}
@@ -308,10 +299,10 @@
 >
 	<!-- Video itself now renders through the shared VideoStage (see
 	     +page.svelte); only the audio tracks are still owned locally. -->
-	<audio bind:this={audio1El} src="{mediaBase}/videos/1.mp4" loop preload={mobileMedia ? 'none' : 'auto'}></audio>
-	<audio bind:this={audio2El} src="{mediaBase}/videos/2.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
-	<audio bind:this={audio3El} src="{mediaBase}/videos/3.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
-	<audio bind:this={audio4El} src="{mediaBase}/videos/4.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>
+	<audio bind:this={audio1El} src="{base}/videos/1.mp4" loop preload="auto"></audio>
+	<audio bind:this={audio2El} src="{base}/videos/2.mp4" preload="auto"></audio>
+	<audio bind:this={audio3El} src="{base}/videos/3.mp4" preload="auto"></audio>
+	<audio bind:this={audio4El} src="{base}/videos/4.mp4" preload="auto"></audio>
 
 	{#if phase === 'select'}
 		<!-- Pinned to the video's cover-fit rectangle so each name lands on
@@ -391,16 +382,6 @@
 </div>
 
 <style>
-	@font-face {
-		font-family: 'Samsara Intro';
-		src: url('/wechat/fonts/intro.woff2') format('woff2');
-		font-weight: 100 900;
-		font-display: swap;
-	}
-	.intro.wechat {
-		font-family: 'Agency FB', Consolas, Arial, 'Samsara Intro', 'Samsara SC', sans-serif;
-	}
-
 	/* Transparent: the actual picture comes from the shared VideoStage
 	   canvas (z-index -1, rendered by +page.svelte), which sits underneath
 	   this whole screen's UI overlay. */
