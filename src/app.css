@@ -19,6 +19,18 @@
 	font-display: swap;
 }
 
+@font-face {
+	font-family: 'Samsara Interface';
+	src: url('/wechat/fonts/interface.woff2') format('woff2');
+	font-weight: 100 900;
+	font-display: swap;
+}
+
+#game-viewport.wechat {
+	--interface-font: 'Samsara Interface';
+	font-family: 'Agency FB', Consolas, Arial, 'Samsara Interface', 'Samsara SC', sans-serif;
+}
+
 :root {
 	--game-width-unit: 1vw;
 	--game-height-unit: 1vh;

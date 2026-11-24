@@ -153,7 +153,12 @@
 				const load4 = () => loadMp4(`${mediaBase}/videos/4.mp4`);
 				media4Promise = mobileMedia ? media3Promise.then(load4, load4) : load4();
 				media4Promise.catch(() => {});
-				if (mobileMedia) media4Promise.then(() => loadMp4(`${mediaBase}/videos/5.mp4`)).catch(() => {});
+				if (mobileMedia) {
+					media4Promise
+						.then(() => loadMp4(`${mediaBase}/videos/5.mp4`))
+						.then(() => loadMp4(`${mediaBase}/videos/6.mp4`))
+						.catch(() => {});
+				}
 				await videoStage.play(`${mediaBase}/videos/1.mp4`, { loop: true, rate: LOOP_RATE });
 				phase = 'loop';
 				startLoopAudio();

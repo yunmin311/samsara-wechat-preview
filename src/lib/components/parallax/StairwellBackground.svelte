@@ -27,7 +27,6 @@
 	//      its end and Trajectory hands over to the SUMMARY screen from
 	//      under full black.
 	import { onMount, onDestroy } from 'svelte';
-	import { base } from '$app/paths';
 	import { mediaBase, mobileMedia } from '$lib/clipPath.js';
 	import { loadMp4, playClipAudio } from '../videoPlayer.js';
 	import { videoStage } from '../videoStage.svelte.js';
@@ -62,7 +61,7 @@
 		// then 5.mp4 and 6.mp4 (21s combined) have already played, so this
 		// warms the HTTP cache with time to spare and the image is never the
 		// thing making that entrance late.
-		new Image().src = `${base}/images/stairwell.jpg`;
+		new Image().src = `${mediaBase}/images/stairwell.jpg`;
 
 		if (!supported) {
 			videoStage.playFallback(`${mediaBase}/videos/5.mp4`, { onEnded: () => onAllocReady?.() });
@@ -76,7 +75,8 @@
 				// player allocates stats, so each switch is instant.
 				media6Promise = loadMp4(`${mediaBase}/videos/6.mp4`);
 				media6Promise.catch(() => {});
-				media7Promise = loadMp4(`${mediaBase}/videos/7.mp4`);
+				const warmExit = () => loadMp4(`${mediaBase}/videos/7.mp4`);
+				media7Promise = mobileMedia ? media6Promise.then(warmExit, warmExit) : warmExit();
 				media7Promise.catch(() => {});
 				await videoStage.play(`${mediaBase}/videos/5.mp4`, { loop: false, onEnded: () => onAllocReady?.() });
 			} catch (err) {
@@ -176,8 +176,8 @@
 	     shared VideoStage canvas (z-index -1), which normal stacking order
 	     already gives it. -->
 	<div class="walk-bob" aria-hidden="true">
-		<div class="walk-layer" style="background-image: url('{base}/images/stairwell.jpg');"></div>
-		<div class="walk-layer late" style="background-image: url('{base}/images/stairwell.jpg');"></div>
+		<div class="walk-layer" style="background-image: url('{mediaBase}/images/stairwell.jpg');"></div>
+		<div class="walk-layer late" style="background-image: url('{mediaBase}/images/stairwell.jpg');"></div>
 	</div>
 {/if}
 <audio bind:this={audio5El} src="{mediaBase}/videos/5.mp4" preload={mobileMedia ? 'none' : 'auto'}></audio>

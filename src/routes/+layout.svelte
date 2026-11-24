@@ -1,7 +1,7 @@
 <script>
 	import '../app.css';
 	import { onMount } from 'svelte';
-	import { isAndroidWeChat } from '$lib/gameViewport.js';
+	import { mobileMedia } from '$lib/clipPath.js';
 	import { base } from '$app/paths';
 	import RotateGate from '$lib/components/RotateGate.svelte';
 	import { lang } from '$lib/i18n.js';
@@ -10,7 +10,7 @@
 	let sideways = $state(false);
 
 	onMount(() => {
-		if (!isAndroidWeChat(navigator.userAgent)) return;
+		if (!mobileMedia) return;
 
 		const portrait = matchMedia('(orientation: portrait) and (max-width: 599px)');
 		const root = document.documentElement;
@@ -41,7 +41,7 @@
 	<link rel="manifest" href="{base}/manifest.webmanifest" />
 </svelte:head>
 
-<div id="game-viewport" class:sideways>
+<div id="game-viewport" class:wechat={mobileMedia} class:sideways>
 	{@render children()}
 </div>
 
